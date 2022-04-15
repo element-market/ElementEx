@@ -142,12 +142,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
             }
         } else {
             for (uint256 i = 0; i < length; i++) {
-                // Delegatecall `_buyERC721` to swallow reverts while
+                // Delegatecall `_buyERC721FromProxy` to swallow reverts while
                 // preserving execution context.
-                // Note that `_buyERC721` is a public function but should _not_
-                // be registered in the Exchange Proxy.
                 (successes[i], ) = _implementation.delegatecall(
-                    abi.encodeWithSelector(this._buyERC721.selector, sellOrders[i], signatures[i])
+                    abi.encodeWithSelector(this._buyERC721FromProxy.selector, sellOrders[i], signatures[i])
                 );
             }
         }
@@ -178,12 +176,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
             }
         } else {
             for (uint256 i = 0; i < length; i++) {
-                // Delegatecall `_buyERC721Ex` to swallow reverts while
+                // Delegatecall `_buyERC721ExFromProxy` to swallow reverts while
                 // preserving execution context.
-                // Note that `_buyERC721Ex` is a public function but should _not_
-                // be registered in the Exchange Proxy.
                 (successes[i], ) = _implementation.delegatecall(
-                    abi.encodeWithSelector(this._buyERC721Ex.selector, sellOrders[i], signatures[i], takers[i],
+                    abi.encodeWithSelector(this._buyERC721ExFromProxy.selector, sellOrders[i], signatures[i], takers[i],
                         address(this).balance - ethBalanceBefore, callbackData[i])
                 );
             }
@@ -191,6 +187,20 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
 
         // Refund
        _transferEth(payable(msg.sender), address(this).balance - ethBalanceBefore);
+    }
+
+    // @Note `_buyERC721FromProxy` is a external function, must call from an external Exchange Proxy,
+    //        but should not be registered in the Exchange Proxy.
+    function _buyERC721FromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) external payable {
+        require(_implementation != address(this));
+        _buyERC721(sellOrder, signature);
+    }
+
+    // @Note `_buyERC721ExFromProxy` is a external function, must call from an external Exchange Proxy,
+    //        but should not be registered in the Exchange Proxy.
+    function _buyERC721ExFromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature, address taker, uint256 ethAvailable, bytes memory takerCallbackData) external payable {
+        require(_implementation != address(this));
+        _buyERC721Ex(sellOrder, signature, taker, ethAvailable, takerCallbackData);
     }
 
     /// @dev Matches a pair of complementary orders that have
@@ -461,7 +471,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
 
     // Core settlement logic for buying an ERC721 asset.
     // Used by `buyERC721` and `batchBuyERC721s`.
-    function _buyERC721(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) public payable {
+    function _buyERC721(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) internal {
         (, bytes32 orderHash) = _buyNFT(sellOrder, signature, 1);
 
         emit ERC721SellOrderFilled(
@@ -479,7 +489,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         address taker,
         uint256 ethAvailable,
         bytes memory takerCallbackData
-    ) public payable {
+    ) internal {
         if (taker == address (0)) {
             taker = msg.sender;
         } else {
