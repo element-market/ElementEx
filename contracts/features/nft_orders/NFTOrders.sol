@@ -48,6 +48,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
     bytes4 private constant TAKER_CALLBACK_MAGIC_BYTES = ITakerCallback.zeroExTakerCallback.selector;
 
     constructor(IEtherToken weth) {
+        require(address(weth) != address(0), "WETH_ADDRESS_ERROR");
         WETH = weth;
         // Remember this feature's original address.
         _implementation = address(this);
@@ -212,12 +213,12 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
         uint256 ethAvailable = params.ethAvailable;
         if (params.takerCallbackData.length > 0) {
-            require(msg.sender != address(this), "_buyNFTEx/CANNOT_CALLBACK_SELF");
+            require(params.taker != address(this), "_buyNFTEx/CANNOT_CALLBACK_SELF");
 
             uint256 ethBalanceBeforeCallback = address(this).balance;
 
             // Invoke the callback
-            bytes4 callbackResult = ITakerCallback(msg.sender).zeroExTakerCallback(orderInfo.orderHash, params.takerCallbackData);
+            bytes4 callbackResult = ITakerCallback(params.taker).zeroExTakerCallback(orderInfo.orderHash, params.takerCallbackData);
 
             // Update `ethAvailable` with amount acquired during
             // the callback

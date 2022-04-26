@@ -113,13 +113,4 @@ abstract contract FixinTokenSpender {
             require(success, "_transferEth/TRANSFER_FAILED");
         }
     }
-
-    /// @dev Gets the maximum amount of an ERC20 token `token` that can be
-    ///      pulled from `owner` by this address.
-    /// @param token The token to spend.
-    /// @param owner The owner of the tokens.
-    /// @return amount The amount of tokens that can be pulled.
-    function _getSpendableERC20BalanceOf(IERC20 token, address owner) internal view returns (uint256) {
-        return Math.min(token.allowance(owner, address(this)), token.balanceOf(owner));
-    }
 }

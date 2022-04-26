@@ -142,10 +142,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
             }
         } else {
             for (uint256 i = 0; i < length; i++) {
-                // Delegatecall `_buyERC721FromProxy` to swallow reverts while
+                // Delegatecall `buyERC721FromProxy` to swallow reverts while
                 // preserving execution context.
                 (successes[i], ) = _implementation.delegatecall(
-                    abi.encodeWithSelector(this._buyERC721FromProxy.selector, sellOrders[i], signatures[i])
+                    abi.encodeWithSelector(this.buyERC721FromProxy.selector, sellOrders[i], signatures[i])
                 );
             }
         }
@@ -176,10 +176,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
             }
         } else {
             for (uint256 i = 0; i < length; i++) {
-                // Delegatecall `_buyERC721ExFromProxy` to swallow reverts while
+                // Delegatecall `buyERC721ExFromProxy` to swallow reverts while
                 // preserving execution context.
                 (successes[i], ) = _implementation.delegatecall(
-                    abi.encodeWithSelector(this._buyERC721ExFromProxy.selector, sellOrders[i], signatures[i], takers[i],
+                    abi.encodeWithSelector(this.buyERC721ExFromProxy.selector, sellOrders[i], signatures[i], takers[i],
                         address(this).balance - ethBalanceBefore, callbackData[i])
                 );
             }
@@ -189,17 +189,17 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
        _transferEth(payable(msg.sender), address(this).balance - ethBalanceBefore);
     }
 
-    // @Note `_buyERC721FromProxy` is a external function, must call from an external Exchange Proxy,
+    // @Note `buyERC721FromProxy` is a external function, must call from an external Exchange Proxy,
     //        but should not be registered in the Exchange Proxy.
-    function _buyERC721FromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) external payable {
-        require(_implementation != address(this));
+    function buyERC721FromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) external payable {
+        require(_implementation != address(this), "MUST_CALL_FROM_PROXY");
         _buyERC721(sellOrder, signature);
     }
 
-    // @Note `_buyERC721ExFromProxy` is a external function, must call from an external Exchange Proxy,
+    // @Note `buyERC721ExFromProxy` is a external function, must call from an external Exchange Proxy,
     //        but should not be registered in the Exchange Proxy.
-    function _buyERC721ExFromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature, address taker, uint256 ethAvailable, bytes memory takerCallbackData) external payable {
-        require(_implementation != address(this));
+    function buyERC721ExFromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature, address taker, uint256 ethAvailable, bytes memory takerCallbackData) external payable {
+        require(_implementation != address(this), "MUST_CALL_FROM_PROXY");
         _buyERC721Ex(sellOrder, signature, taker, ethAvailable, takerCallbackData);
     }
 
@@ -418,7 +418,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     ///      valid for that order and signer.
     /// @param order An ERC721 sell order.
     function preSignERC721SellOrder(LibNFTOrder.NFTSellOrder memory order) public override {
-        require(order.maker == msg.sender);
+        require(order.maker == msg.sender, "ONLY_MAKER");
 
         uint256 hashNonce = LibCommonNftOrdersStorage.getStorage().hashNonces[order.maker];
         bytes32 orderHash = getERC721SellOrderHash(order);
@@ -433,7 +433,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     ///      valid for that order and signer.
     /// @param order An ERC721 buy order.
     function preSignERC721BuyOrder(LibNFTOrder.NFTBuyOrder memory order) public override {
-        require(order.maker == msg.sender);
+        require(order.maker == msg.sender, "ONLY_MAKER");
 
         uint256 hashNonce = LibCommonNftOrdersStorage.getStorage().hashNonces[order.maker];
         bytes32 orderHash = getERC721BuyOrderHash(order);
@@ -669,13 +669,13 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         return LibERC721OrdersStorage.getStorage().orderStatusByMaker[maker][nonceRange];
     }
 
-    function getHashNonce(address maker) public override view returns (uint256) {
+    function getHashNonce(address maker) external override view returns (uint256) {
         return LibCommonNftOrdersStorage.getStorage().hashNonces[maker];
     }
 
     /// Increment a particular maker's nonce, thereby invalidating all orders that were not signed
     /// with the original nonce.
-    function incrementHashNonce() public override {
+    function incrementHashNonce() external override {
         uint256 newHashNonce = ++LibCommonNftOrdersStorage.getStorage().hashNonces[msg.sender];
         emit HashNonceIncremented(msg.sender, newHashNonce);
     }
