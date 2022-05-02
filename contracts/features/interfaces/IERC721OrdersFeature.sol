@@ -31,16 +31,38 @@ interface IERC721OrdersFeature {
     /// @dev Emitted whenever an `ERC721SellOrder` is filled.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
-    /// @param erc20Token (96bit ERC20TokenAmount + 160bit ERC20TokenAddress).
-    /// @param erc721Token (96bit ERC721TokenId + 160bit ERC721TokenAddress).
-    event ERC721SellOrderFilled(address maker, address taker, uint256 erc20Token, uint256 erc721Token, bytes32 orderHash);
+    /// @param erc20Token The address of the ERC20 token.
+    /// @param erc20TokenAmount The amount of ERC20 token to sell.
+    /// @param erc721Token The address of the ERC721 token.
+    /// @param erc721TokenId The ID of the ERC721 asset.
+    /// @param orderHash The `ERC721SellOrder` hash.
+    event ERC721SellOrderFilled(
+        address maker,
+        address taker,
+        IERC20 erc20Token,
+        uint256 erc20TokenAmount,
+        address erc721Token,
+        uint256 erc721TokenId,
+        bytes32 orderHash
+    );
 
     /// @dev Emitted whenever an `ERC721BuyOrder` is filled.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
-    /// @param erc20Token (96bit ERC20TokenAmount + 160bit ERC20TokenAddress).
-    /// @param erc721Token (96bit ERC721TokenId + 160bit ERC721TokenAddress).
-    event ERC721BuyOrderFilled(address maker, address taker, uint256 erc20Token, uint256 erc721Token, bytes32 orderHash);
+    /// @param erc20Token The address of the ERC20 token.
+    /// @param erc20TokenAmount The amount of ERC20 token to buy.
+    /// @param erc721Token The address of the ERC721 token.
+    /// @param erc721TokenId The ID of the ERC721 asset.
+    /// @param orderHash The `ERC721BuyOrder` hash.
+    event ERC721BuyOrderFilled(
+        address maker,
+        address taker,
+        IERC20 erc20Token,
+        uint256 erc20TokenAmount,
+        address erc721Token,
+        uint256 erc721TokenId,
+        bytes32 orderHash
+    );
 
     /// @dev Emitted when an `ERC721SellOrder` is pre-signed.
     ///      Contains all the fields of the order.

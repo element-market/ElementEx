@@ -326,16 +326,20 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         emit ERC721SellOrderFilled(
             sellOrder.maker,
             buyOrder.maker, // taker
-            (sellOrder.erc20TokenAmount << 160) | uint160(address(sellOrder.erc20Token)),
-            (sellOrder.nftId << 160) | uint160(sellOrder.nft),
+            sellOrder.erc20Token,
+            sellOrder.erc20TokenAmount,
+            sellOrder.nft,
+            sellOrder.nftId,
             sellOrderInfo.orderHash
         );
 
         emit ERC721BuyOrderFilled(
             buyOrder.maker,
             sellOrder.maker, // taker
-            (buyOrder.erc20TokenAmount << 160) | uint160(address(buyOrder.erc20Token)),
-            (sellOrder.nftId << 160) | uint160(buyOrder.nft),
+            buyOrder.erc20Token,
+            buyOrder.erc20TokenAmount,
+            buyOrder.nft,
+            sellOrder.nftId,
             buyOrderInfo.orderHash
         );
     }
@@ -463,8 +467,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         emit ERC721BuyOrderFilled(
             buyOrder.maker,
             taker,
-            (buyOrder.erc20TokenAmount << 160) | uint160(address(buyOrder.erc20Token)),
-            (erc721TokenId << 160) | uint160(buyOrder.nft),
+            buyOrder.erc20Token,
+            buyOrder.erc20TokenAmount,
+            buyOrder.nft,
+            erc721TokenId,
             orderHash
         );
     }
@@ -477,8 +483,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         emit ERC721SellOrderFilled(
             sellOrder.maker,
             msg.sender,
-            (sellOrder.erc20TokenAmount << 160) | uint160(address(sellOrder.erc20Token)),
-            (sellOrder.nftId << 160) | uint160(sellOrder.nft),
+            sellOrder.erc20Token,
+            sellOrder.erc20TokenAmount,
+            sellOrder.nft,
+            sellOrder.nftId,
             orderHash
         );
     }
@@ -500,8 +508,10 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         emit ERC721SellOrderFilled(
             sellOrder.maker,
             taker,
-            (sellOrder.erc20TokenAmount << 160) | uint160(address(sellOrder.erc20Token)),
-            (sellOrder.nftId << 160) | uint160(sellOrder.nft),
+            sellOrder.erc20Token,
+            sellOrder.erc20TokenAmount,
+            sellOrder.nft,
+            sellOrder.nftId,
             orderHash
         );
     }
