@@ -35,6 +35,8 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     /// @dev The magic return value indicating the success of a `onERC721Received`.
     bytes4 private constant ERC721_RECEIVED_MAGIC_BYTES = this.onERC721Received.selector;
 
+    uint256 private constant ORDER_NONCE_MASK = (1 << 184) - 1;
+
     constructor(IEtherToken weth) NFTOrders(weth) {
     }
 
@@ -48,25 +50,22 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     /// @param unwrapNativeToken If this parameter is true and the
     ///        ERC20 token of the order is e.g. WETH, unwraps the
     ///        token before transferring it to the taker.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC721OrderCallback` on `msg.sender` after
-    ///        the ERC20 tokens have been transferred to `msg.sender`
-    ///        but before transferring the ERC721 asset to the buyer.
     function sellERC721(
         LibNFTOrder.NFTBuyOrder memory buyOrder,
         LibSignature.Signature memory signature,
         uint256 erc721TokenId,
         bool unwrapNativeToken,
-        bytes memory callbackData
+        bytes memory takerData
     ) public override {
-        _sellERC721(buyOrder, signature, erc721TokenId, unwrapNativeToken, msg.sender, msg.sender, callbackData);
+        _sellERC721(buyOrder, signature, erc721TokenId, unwrapNativeToken, msg.sender, msg.sender, takerData);
     }
 
     /// @dev Buys an ERC721 asset by filling the given order.
     /// @param sellOrder The ERC721 sell order.
     /// @param signature The order signature.
     function buyERC721(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) public override payable {
-        uint256 ethBalanceBefore = address(this).balance - msg.value;
+        uint256 ethBalanceBefore;
+        assembly { ethBalanceBefore := sub(selfbalance(), callvalue()) }
 
         _buyERC721(sellOrder, signature);
 
@@ -80,11 +79,12 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         LibNFTOrder.NFTSellOrder memory sellOrder,
         LibSignature.Signature memory signature,
         address taker,
-        bytes memory callbackData
+        bytes memory takerData
     ) public override payable {
-        uint256 ethBalanceBefore = address(this).balance - msg.value;
+        uint256 ethBalanceBefore;
+        assembly { ethBalanceBefore := sub(selfbalance(), callvalue()) }
 
-        _buyERC721Ex(sellOrder, signature, taker, msg.value, callbackData);
+        _buyERC721Ex(sellOrder, signature, taker, msg.value, takerData);
 
         if (address(this).balance != ethBalanceBefore) {
             // Refund
@@ -158,12 +158,12 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         LibNFTOrder.NFTSellOrder[] memory sellOrders,
         LibSignature.Signature[] memory signatures,
         address[] calldata takers,
-        bytes[] memory callbackData,
+        bytes[] memory takerDatas,
         bool revertIfIncomplete
     ) public override payable returns (bool[] memory successes) {
         // All array length must match.
         uint256 length = sellOrders.length;
-        require(length == signatures.length && length == takers.length && length == callbackData.length, "ARRAY_LENGTH_MISMATCH");
+        require(length == signatures.length && length == takers.length && length == takerDatas.length, "ARRAY_LENGTH_MISMATCH");
 
         successes = new bool[](length);
         uint256 ethBalanceBefore = address(this).balance - msg.value;
@@ -171,7 +171,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         if (revertIfIncomplete) {
             for (uint256 i = 0; i < length; i++) {
                 // Will revert if _buyERC721Ex reverts.
-                _buyERC721Ex(sellOrders[i], signatures[i], takers[i], address(this).balance - ethBalanceBefore, callbackData[i]);
+                _buyERC721Ex(sellOrders[i], signatures[i], takers[i], address(this).balance - ethBalanceBefore, takerDatas[i]);
                 successes[i] = true;
             }
         } else {
@@ -180,7 +180,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
                 // preserving execution context.
                 (successes[i], ) = _implementation.delegatecall(
                     abi.encodeWithSelector(this.buyERC721ExFromProxy.selector, sellOrders[i], signatures[i], takers[i],
-                        address(this).balance - ethBalanceBefore, callbackData[i])
+                        address(this).balance - ethBalanceBefore, takerDatas[i])
                 );
             }
         }
@@ -198,9 +198,9 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
 
     // @Note `buyERC721ExFromProxy` is a external function, must call from an external Exchange Proxy,
     //        but should not be registered in the Exchange Proxy.
-    function buyERC721ExFromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature, address taker, uint256 ethAvailable, bytes memory takerCallbackData) external payable {
+    function buyERC721ExFromProxy(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature, address taker, uint256 ethAvailable, bytes memory takerData) external payable {
         require(_implementation != address(this), "MUST_CALL_FROM_PROXY");
-        _buyERC721Ex(sellOrder, signature, taker, ethAvailable, takerCallbackData);
+        _buyERC721Ex(sellOrder, signature, taker, ethAvailable, takerData);
     }
 
     /// @dev Matches a pair of complementary orders that have
@@ -227,7 +227,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         LibNFTOrder.OrderInfo memory buyOrderInfo = _getOrderInfo(buyOrder);
 
         _validateSellOrder(sellOrder, sellOrderSignature, sellOrderInfo, buyOrder.maker);
-        _validateBuyOrder(buyOrder, buyOrderSignature, buyOrderInfo, sellOrder.maker, sellOrder.nftId);
+        _validateBuyOrder(buyOrder, buyOrderSignature, buyOrderInfo, sellOrder.maker, sellOrder.nftId, "");
 
         // English Auction
         if (sellOrder.expiry >> 252 == 2) {
@@ -323,22 +323,15 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
             }
         }
 
-        emit ERC721SellOrderFilled(
-            sellOrder.maker,
-            buyOrder.maker, // taker
-            sellOrder.erc20Token,
-            sellOrder.erc20TokenAmount,
-            sellOrder.nft,
-            sellOrder.nftId,
+        _emitEventSellOrderFilled(
+            sellOrder,
+            buyOrder.maker,
             sellOrderInfo.orderHash
         );
 
-        emit ERC721BuyOrderFilled(
-            buyOrder.maker,
-            sellOrder.maker, // taker
-            buyOrder.erc20Token,
-            buyOrder.erc20TokenAmount,
-            buyOrder.nft,
+        _emitEventBuyOrderFilled(
+            buyOrder,
+            sellOrder.maker,
             sellOrder.nftId,
             buyOrderInfo.orderHash
         );
@@ -456,20 +449,17 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         bool unwrapNativeToken,
         address taker,
         address currentNftOwner,
-        bytes memory takerCallbackData
+        bytes memory takerData
     ) private {
         (, bytes32 orderHash) = _sellNFT(
             buyOrder,
             signature,
-            SellParams(1, erc721TokenId, unwrapNativeToken, taker, currentNftOwner, takerCallbackData)
+            SellParams(1, erc721TokenId, unwrapNativeToken, taker, currentNftOwner, takerData)
         );
 
-        emit ERC721BuyOrderFilled(
-            buyOrder.maker,
+        _emitEventBuyOrderFilled(
+            buyOrder,
             taker,
-            buyOrder.erc20Token,
-            buyOrder.erc20TokenAmount,
-            buyOrder.nft,
             erc721TokenId,
             orderHash
         );
@@ -480,13 +470,9 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     function _buyERC721(LibNFTOrder.NFTSellOrder memory sellOrder, LibSignature.Signature memory signature) internal {
         (, bytes32 orderHash) = _buyNFT(sellOrder, signature, 1);
 
-        emit ERC721SellOrderFilled(
-            sellOrder.maker,
+        _emitEventSellOrderFilled(
+            sellOrder,
             msg.sender,
-            sellOrder.erc20Token,
-            sellOrder.erc20TokenAmount,
-            sellOrder.nft,
-            sellOrder.nftId,
             orderHash
         );
     }
@@ -496,23 +482,76 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         LibSignature.Signature memory signature,
         address taker,
         uint256 ethAvailable,
-        bytes memory takerCallbackData
+        bytes memory takerData
     ) internal {
         if (taker == address (0)) {
             taker = msg.sender;
         } else {
             require(taker != address(this), "_buy721Ex/TAKER_CANNOT_SELF");
         }
-        (, bytes32 orderHash) = _buyNFTEx(sellOrder, signature, BuyParams(1, ethAvailable, taker, takerCallbackData));
+        (, bytes32 orderHash) = _buyNFTEx(sellOrder, signature, BuyParams(1, ethAvailable, taker, takerData));
+
+        _emitEventSellOrderFilled(
+            sellOrder,
+            taker,
+            orderHash
+        );
+    }
+
+    function _emitEventSellOrderFilled(
+        LibNFTOrder.NFTSellOrder memory sellOrder,
+        address taker,
+        bytes32 orderHash
+    ) internal {
+        Fee[] memory fees = new Fee[](sellOrder.fees.length);
+        for (uint256 i; i < sellOrder.fees.length; ) {
+            fees[i].recipient = sellOrder.fees[i].recipient;
+            fees[i].amount = sellOrder.fees[i].amount;
+            unchecked {
+                sellOrder.erc20TokenAmount += fees[i].amount;
+                ++i;
+            }
+        }
 
         emit ERC721SellOrderFilled(
+            orderHash,
             sellOrder.maker,
             taker,
+            sellOrder.nonce,
             sellOrder.erc20Token,
             sellOrder.erc20TokenAmount,
+            fees,
             sellOrder.nft,
-            sellOrder.nftId,
-            orderHash
+            sellOrder.nftId
+        );
+    }
+
+    function _emitEventBuyOrderFilled(
+        LibNFTOrder.NFTBuyOrder memory buyOrder,
+        address taker,
+        uint256 nftId,
+        bytes32 orderHash
+    ) internal {
+        Fee[] memory fees = new Fee[](buyOrder.fees.length);
+        for (uint256 i; i < buyOrder.fees.length; ) {
+            fees[i].recipient = buyOrder.fees[i].recipient;
+            fees[i].amount = buyOrder.fees[i].amount;
+            unchecked {
+                buyOrder.erc20TokenAmount += fees[i].amount;
+                ++i;
+            }
+        }
+
+        emit ERC721BuyOrderFilled(
+            orderHash,
+            buyOrder.maker,
+            taker,
+            buyOrder.nonce,
+            buyOrder.erc20Token,
+            buyOrder.erc20TokenAmount,
+            fees,
+            buyOrder.nft,
+            nftId
         );
     }
 
@@ -568,7 +607,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         uint256 flag = 1 << (nonce & 255);
         // Update order status bit vector to indicate that the given order
         // has been cancelled/filled by setting the designated bit to 1.
-        LibERC721OrdersStorage.getStorage().orderStatusByMaker[maker][uint248(nonce >> 8)] |= flag;
+        LibERC721OrdersStorage.getStorage().orderStatusByMaker[maker][uint248((nonce >> 8) & ORDER_NONCE_MASK)] |= flag;
     }
 
     /// @dev Get the current status of an ERC721 sell order.
@@ -593,7 +632,7 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
         LibERC721OrdersStorage.Storage storage stor = LibERC721OrdersStorage.getStorage();
 
         // `orderStatusByMaker` is indexed by maker and nonce.
-        uint256 orderStatusBitVector = stor.orderStatusByMaker[order.maker][uint248(order.nonce >> 8)];
+        uint256 orderStatusBitVector = stor.orderStatusByMaker[order.maker][uint248((order.nonce >> 8) & ORDER_NONCE_MASK)];
 
         // The bitvector is indexed by the lower 8 bits of the nonce.
         uint256 flag = 1 << (order.nonce & 255);
@@ -676,7 +715,8 @@ contract ERC721OrdersFeature is IERC721OrdersFeature, FixinERC721Spender, NFTOrd
     /// @return bitVector The order status bit vector for the
     ///         given maker and nonce range.
     function getERC721OrderStatusBitVector(address maker, uint248 nonceRange) external override view returns (uint256) {
-        return LibERC721OrdersStorage.getStorage().orderStatusByMaker[maker][nonceRange];
+        uint248 range = uint248(nonceRange & ORDER_NONCE_MASK);
+        return LibERC721OrdersStorage.getStorage().orderStatusByMaker[maker][range];
     }
 
     function getHashNonce(address maker) external override view returns (uint256) {

@@ -25,7 +25,6 @@ import "../../fixins/FixinEIP712.sol";
 import "../../fixins/FixinTokenSpender.sol";
 import "../../vendor/IEtherToken.sol";
 import "../../vendor/IFeeRecipient.sol";
-import "../../vendor/ITakerCallback.sol";
 import "../libs/LibSignature.sol";
 import "../libs/LibNFTOrder.sol";
 
@@ -44,8 +43,6 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
     /// @dev The magic return value indicating the success of a `receiveZeroExFeeCallback`.
     bytes4 private constant FEE_CALLBACK_MAGIC_BYTES = IFeeRecipient.receiveZeroExFeeCallback.selector;
-    /// @dev The magic return value indicating the success of a `zeroExTakerCallback`.
-    bytes4 private constant TAKER_CALLBACK_MAGIC_BYTES = ITakerCallback.zeroExTakerCallback.selector;
 
     constructor(IEtherToken weth) {
         require(address(weth) != address(0), "WETH_ADDRESS_ERROR");
@@ -54,20 +51,25 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         _implementation = address(this);
     }
 
+    event TakerDataEmitted(
+        bytes32 orderHash,
+        bytes takerData
+    );
+
     struct SellParams {
         uint128 sellAmount;
         uint256 tokenId;
         bool unwrapNativeToken;
         address taker;
         address currentNftOwner;
-        bytes takerCallbackData;
+        bytes takerData;
     }
 
     struct BuyParams {
         uint128 buyAmount;
         uint256 ethAvailable;
         address taker;
-        bytes takerCallbackData;
+        bytes takerData;
     }
 
     // Core settlement logic for selling an NFT asset.
@@ -80,7 +82,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         orderHash = orderInfo.orderHash;
 
         // Check that the order can be filled.
-        _validateBuyOrder(buyOrder, signature, orderInfo, params.taker, params.tokenId);
+        _validateBuyOrder(buyOrder, signature, orderInfo, params.taker, params.tokenId, params.takerData);
 
         // Check amount.
         if (params.sellAmount > orderInfo.remainingAmount) {
@@ -114,16 +116,6 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             _transferERC20TokensFrom(buyOrder.erc20Token, buyOrder.maker, params.taker, erc20FillAmount);
         }
 
-        if (params.takerCallbackData.length > 0) {
-            require(params.taker != address(this), "_sellNFT/CANNOT_CALLBACK_SELF");
-
-            // Invoke the callback
-            bytes4 callbackResult = ITakerCallback(params.taker).zeroExTakerCallback(orderInfo.orderHash, params.takerCallbackData);
-
-            // Check for the magic success bytes
-            require(callbackResult == TAKER_CALLBACK_MAGIC_BYTES, "_sellNFT/CALLBACK_FAILED");
-        }
-
         // Transfer the NFT asset to the buyer.
         // If this function is called from the
         // `onNFTReceived` callback the Exchange Proxy
@@ -133,6 +125,11 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
         // The buyer pays the order fees.
         _payFees(buyOrder.asNFTSellOrder(), buyOrder.maker, params.sellAmount, orderInfo.orderAmount, false);
+
+        // Emit TakerData Event.
+        if (params.takerData.length > 0x20) {
+            _emitEventTakerData(orderHash, params.takerData);
+        }
     }
 
     // Core settlement logic for buying an NFT asset.
@@ -212,22 +209,6 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         _transferNFTAssetFrom(sellOrder.nft, sellOrder.maker, params.taker, sellOrder.nftId, params.buyAmount);
 
         uint256 ethAvailable = params.ethAvailable;
-        if (params.takerCallbackData.length > 0) {
-            require(params.taker != address(this), "_buyNFTEx/CANNOT_CALLBACK_SELF");
-
-            uint256 ethBalanceBeforeCallback = address(this).balance;
-
-            // Invoke the callback
-            bytes4 callbackResult = ITakerCallback(params.taker).zeroExTakerCallback(orderInfo.orderHash, params.takerCallbackData);
-
-            // Update `ethAvailable` with amount acquired during
-            // the callback
-            ethAvailable += address(this).balance - ethBalanceBeforeCallback;
-
-            // Check for the magic success bytes
-            require(callbackResult == TAKER_CALLBACK_MAGIC_BYTES, "_buyNFTEx/CALLBACK_FAILED");
-        }
-
         if (address(sellOrder.erc20Token) == NATIVE_TOKEN_ADDRESS) {
             uint256 totalPaid = erc20FillAmount + _calcTotalFeesPaid(sellOrder.fees, params.buyAmount, orderInfo.orderAmount);
             if (ethAvailable < totalPaid) {
@@ -291,6 +272,42 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             // The buyer pays fees.
             _payFees(sellOrder, msg.sender, params.buyAmount, orderInfo.orderAmount, false);
         }
+
+        // Emit TakerData Event.
+        if (params.takerData.length > 0x20) {
+            _emitEventTakerData(orderHash, params.takerData);
+        }
+    }
+
+    function _emitEventTakerData(bytes32 orderHash, bytes memory takerData) internal {
+        uint256 startPoint;
+        uint256 endPoint;
+        assembly {
+            let data0 := mload(add(takerData, 0x20))
+            // data0 == [4 bytes(magic bytes) + 24 bytes(unused) + 2 bytes(endPoint) + 2 bytes(startPoint)]
+            if eq(shr(224, data0), 0xfeefeefe) {
+                startPoint := and(data0, 0xffff)
+                endPoint := and(shr(16, data0), 0xffff)
+            }
+        }
+
+        if (startPoint >= endPoint || (endPoint + 0x20) > takerData.length) {
+            return;
+        }
+
+        bytes memory data;
+        bytes32 dataBefore;
+        assembly {
+            data := add(add(takerData, 0x20), startPoint)
+            dataBefore := mload(data)
+            mstore(data, sub(endPoint, startPoint))
+        }
+
+        emit TakerDataEmitted(orderHash, data);
+
+        assembly {
+            mstore(data, dataBefore)
+        }
     }
 
     function _validateSellOrder(
@@ -315,7 +332,8 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         LibSignature.Signature memory signature,
         LibNFTOrder.OrderInfo memory orderInfo,
         address taker,
-        uint256 tokenId
+        uint256 tokenId,
+        bytes memory takerData
     ) internal view {
         // The ERC20 token cannot be ETH.
         require(address(buyOrder.erc20Token) != NATIVE_TOKEN_ADDRESS, "_validateBuyOrder/TOKEN_MISMATCH");
@@ -329,7 +347,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
         // Check that the asset with the given token ID satisfies the properties
         // specified by the order.
-        _validateOrderProperties(buyOrder, tokenId);
+        _validateOrderProperties(buyOrder, tokenId, takerData);
 
         // Check the signature.
         _validateOrderSignature(orderInfo.orderHash, signature, buyOrder.maker);
@@ -441,7 +459,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         return totalFeesPaid;
     }
 
-    function _validateOrderProperties(LibNFTOrder.NFTBuyOrder memory order, uint256 tokenId) internal view {
+    function _validateOrderProperties(LibNFTOrder.NFTBuyOrder memory order, uint256 tokenId, bytes memory takerData) internal view {
         // If no properties are specified, check that the given
         // `tokenId` matches the one specified in the order.
         if (order.nftProperties.length == 0) {
@@ -455,7 +473,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
                 if (address(property.propertyValidator) != address(0)) {
                     // Call the property validator and throw a descriptive error
                     // if the call reverts.
-                    try property.propertyValidator.validateProperty(order.nft, tokenId, property.propertyData) {
+                    try property.propertyValidator.validateProperty(order.nft, tokenId, property.propertyData, takerData) {
                     } catch (bytes memory /* reason */) {
                         revert("PROPERTY_VALIDATION_FAILED");
                     }

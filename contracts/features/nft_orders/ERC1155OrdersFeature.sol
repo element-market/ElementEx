@@ -43,6 +43,8 @@ contract ERC1155OrdersFeature is
     /// @dev The magic return value indicating the success of a `onERC1155Received`.
     bytes4 private constant ERC1155_RECEIVED_MAGIC_BYTES = this.onERC1155Received.selector;
 
+    uint256 private constant ORDER_NONCE_MASK = (1 << 184) - 1;
+
     constructor(IEtherToken weth) NFTOrders(weth) {
     }
 
@@ -58,17 +60,13 @@ contract ERC1155OrdersFeature is
     /// @param unwrapNativeToken If this parameter is true and the
     ///        ERC20 token of the order is e.g. WETH, unwraps the
     ///        token before transferring it to the taker.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC1155OrderCallback` on `msg.sender` after
-    ///        the ERC20 tokens have been transferred to `msg.sender`
-    ///        but before transferring the ERC1155 asset to the buyer.
     function sellERC1155(
         LibNFTOrder.ERC1155BuyOrder memory buyOrder,
         LibSignature.Signature memory signature,
         uint256 erc1155TokenId,
         uint128 erc1155SellAmount,
         bool unwrapNativeToken,
-        bytes memory callbackData
+        bytes memory takerData
     ) public override {
         _sellERC1155(
             buyOrder,
@@ -79,7 +77,7 @@ contract ERC1155OrdersFeature is
                 unwrapNativeToken,
                 msg.sender, // taker
                 msg.sender, // owner
-                callbackData
+                takerData
             )
         );
     }
@@ -109,7 +107,7 @@ contract ERC1155OrdersFeature is
         LibSignature.Signature memory signature,
         address taker,
         uint128 erc1155BuyAmount,
-        bytes memory callbackData
+        bytes memory takerData
     ) public override payable {
         uint256 ethBalanceBefore = address(this).balance - msg.value;
 
@@ -120,7 +118,7 @@ contract ERC1155OrdersFeature is
                 erc1155BuyAmount,
                 msg.value,
                 taker,
-                callbackData
+                takerData
             )
         );
 
@@ -141,7 +139,7 @@ contract ERC1155OrdersFeature is
         // Update order cancellation bit vector to indicate that the order
         // has been cancelled/filled by setting the designated bit to 1.
         LibERC1155OrdersStorage.getStorage().orderCancellationByMaker
-            [msg.sender][uint248(orderNonce >> 8)] |= flag;
+            [msg.sender][uint248((orderNonce >> 8) & ORDER_NONCE_MASK)] |= flag;
 
         emit ERC1155OrderCancelled(msg.sender, orderNonce);
     }
@@ -217,7 +215,7 @@ contract ERC1155OrdersFeature is
         LibSignature.Signature[] memory signatures,
         address[] calldata takers,
         uint128[] calldata erc1155FillAmounts,
-        bytes[] memory callbackData,
+        bytes[] memory takerDatas,
         bool revertIfIncomplete
     )
         public
@@ -230,7 +228,7 @@ contract ERC1155OrdersFeature is
             length == signatures.length &&
             length == takers.length &&
             length == erc1155FillAmounts.length &&
-            length == callbackData.length,
+            length == takerDatas.length,
             "ARRAY_LENGTH_MISMATCH"
         );
         successes = new bool[](length);
@@ -246,7 +244,7 @@ contract ERC1155OrdersFeature is
                         erc1155FillAmounts[i],
                         address(this).balance - ethBalanceBefore, // Remaining ETH available
                         takers[i],
-                        callbackData[i]
+                        takerDatas[i]
                     )
                 );
                 successes[i] = true;
@@ -264,7 +262,7 @@ contract ERC1155OrdersFeature is
                             erc1155FillAmounts[i],
                             address(this).balance - ethBalanceBefore, // Remaining ETH available
                             takers[i],
-                            callbackData[i]
+                            takerDatas[i]
                         )
                     )
                 );
@@ -425,18 +423,16 @@ contract ERC1155OrdersFeature is
         LibSignature.Signature memory signature,
         SellParams memory params
     ) private {
-        (uint256 erc20FillAmount, bytes32 orderHash) = _sellNFT(
+        bytes32 orderHash;
+        (buyOrder.erc20TokenAmount, orderHash) = _sellNFT(
             buyOrder.asNFTBuyOrder(),
             signature,
             params
         );
 
-        emit ERC1155BuyOrderFilled(
-            buyOrder.maker,
+        _emitEventBuyOrderFilled(
+            buyOrder,
             params.taker,
-            buyOrder.erc20Token,
-            erc20FillAmount,
-            buyOrder.erc1155Token,
             params.tokenId,
             params.sellAmount,
             orderHash
@@ -450,19 +446,16 @@ contract ERC1155OrdersFeature is
         LibSignature.Signature memory signature,
         uint128 buyAmount
     ) internal {
-        (uint256 erc20FillAmount, bytes32 orderHash) = _buyNFT(
+        bytes32 orderHash;
+        (sellOrder.erc20TokenAmount, orderHash) = _buyNFT(
             sellOrder.asNFTSellOrder(),
             signature,
             buyAmount
         );
 
-        emit ERC1155SellOrderFilled(
-            sellOrder.maker,
+        _emitEventSellOrderFilled(
+            sellOrder,
             msg.sender,
-            sellOrder.erc20Token,
-            erc20FillAmount,
-            sellOrder.erc1155Token,
-            sellOrder.erc1155TokenId,
             buyAmount,
             orderHash
         );
@@ -478,21 +471,79 @@ contract ERC1155OrdersFeature is
         } else {
             require(params.taker != address(this), "_buy1155Ex/TAKER_CANNOT_SELF");
         }
-        (uint256 erc20FillAmount, bytes32 orderHash) = _buyNFTEx(
+        bytes32 orderHash;
+        (sellOrder.erc20TokenAmount, orderHash) = _buyNFTEx(
             sellOrder.asNFTSellOrder(),
             signature,
             params
         );
 
-        emit ERC1155SellOrderFilled(
-            sellOrder.maker,
+        _emitEventSellOrderFilled(
+            sellOrder,
             params.taker,
-            sellOrder.erc20Token,
-            erc20FillAmount,
-            sellOrder.erc1155Token,
-            sellOrder.erc1155TokenId,
             params.buyAmount,
             orderHash
+        );
+    }
+
+    function _emitEventSellOrderFilled(
+        LibNFTOrder.ERC1155SellOrder memory sellOrder,
+        address taker,
+        uint128 erc1155FillAmount,
+        bytes32 orderHash
+    ) internal {
+        Fee[] memory fees = new Fee[](sellOrder.fees.length);
+        unchecked {
+            for (uint256 i; i < sellOrder.fees.length; ) {
+                fees[i].recipient = sellOrder.fees[i].recipient;
+                fees[i].amount = sellOrder.fees[i].amount * erc1155FillAmount / sellOrder.erc1155TokenAmount;
+                sellOrder.erc20TokenAmount += fees[i].amount;
+                ++i;
+            }
+        }
+
+        emit ERC1155SellOrderFilled(
+            orderHash,
+            sellOrder.maker,
+            taker,
+            sellOrder.nonce,
+            sellOrder.erc20Token,
+            sellOrder.erc20TokenAmount,
+            fees,
+            sellOrder.erc1155Token,
+            sellOrder.erc1155TokenId,
+            erc1155FillAmount
+        );
+    }
+
+    function _emitEventBuyOrderFilled(
+        LibNFTOrder.ERC1155BuyOrder memory buyOrder,
+        address taker,
+        uint256 erc1155TokenId,
+        uint128 erc1155FillAmount,
+        bytes32 orderHash
+    ) internal {
+        Fee[] memory fees = new Fee[](buyOrder.fees.length);
+        unchecked {
+            for (uint256 i; i < buyOrder.fees.length; ) {
+                fees[i].recipient = buyOrder.fees[i].recipient;
+                fees[i].amount = buyOrder.fees[i].amount * erc1155FillAmount / buyOrder.erc1155TokenAmount;
+                buyOrder.erc20TokenAmount += fees[i].amount;
+                ++i;
+            }
+        }
+
+        emit ERC1155BuyOrderFilled(
+            orderHash,
+            buyOrder.maker,
+            taker,
+            buyOrder.nonce,
+            buyOrder.erc20Token,
+            buyOrder.erc20TokenAmount,
+            fees,
+            buyOrder.erc1155Token,
+            erc1155TokenId,
+            erc1155FillAmount
         );
     }
 
@@ -616,7 +667,7 @@ contract ERC1155OrdersFeature is
 
             // `orderCancellationByMaker` is indexed by maker and nonce.
             uint256 orderCancellationBitVector =
-                stor.orderCancellationByMaker[order.maker][uint248(order.nonce >> 8)];
+                stor.orderCancellationByMaker[order.maker][uint248((order.nonce >> 8) & ORDER_NONCE_MASK)];
             // The bitvector is indexed by the lower 8 bits of the nonce.
             uint256 flag = 1 << (order.nonce & 255);
 
@@ -684,7 +735,7 @@ contract ERC1155OrdersFeature is
 
             // `orderCancellationByMaker` is indexed by maker and nonce.
             uint256 orderCancellationBitVector =
-                stor.orderCancellationByMaker[order.maker][uint248(order.nonce >> 8)];
+                stor.orderCancellationByMaker[order.maker][uint248((order.nonce >> 8) & ORDER_NONCE_MASK)];
             // The bitvector is indexed by the lower 8 bits of the nonce.
             uint256 flag = 1 << (order.nonce & 255);
 
@@ -748,7 +799,8 @@ contract ERC1155OrdersFeature is
         view
         returns (uint256)
     {
-        return LibERC1155OrdersStorage.getStorage().orderCancellationByMaker[maker][nonceRange];
+        uint248 range = uint248(nonceRange & ORDER_NONCE_MASK);
+        return LibERC1155OrdersStorage.getStorage().orderCancellationByMaker[maker][range];
     }
 
     /// @dev Get the order info for an NFT sell order.
@@ -827,7 +879,8 @@ contract ERC1155OrdersFeature is
             buyOrderSignature,
             buyOrderInfo,
             sellOrder.maker,
-            sellOrder.erc1155TokenId
+            sellOrder.erc1155TokenId,
+            ""
         );
 
         // fillAmount = min(sellOrder.remainingAmount, buyOrder.remainingAmount)
@@ -1006,43 +1059,6 @@ contract ERC1155OrdersFeature is
             sellOrder.erc1155TokenId,
             erc1155FillAmount,
             buyOrderInfo.orderHash
-        );
-    }
-
-    function _emitEventSellOrderFilled(
-        LibNFTOrder.ERC1155SellOrder memory sellOrder,
-        address taker,
-        uint128 erc1155FillAmount,
-        bytes32 orderHash
-    ) private {
-        emit ERC1155SellOrderFilled(
-            sellOrder.maker,
-            taker,
-            sellOrder.erc20Token,
-            sellOrder.erc20TokenAmount,
-            sellOrder.erc1155Token,
-            sellOrder.erc1155TokenId,
-            erc1155FillAmount,
-            orderHash
-        );
-    }
-
-    function _emitEventBuyOrderFilled(
-        LibNFTOrder.ERC1155BuyOrder memory buyOrder,
-        address taker,
-        uint256 erc1155TokenId,
-        uint128 erc1155FillAmount,
-        bytes32 orderHash
-    ) private {
-        emit ERC1155BuyOrderFilled(
-            buyOrder.maker,
-            taker,
-            buyOrder.erc20Token,
-            buyOrder.erc20TokenAmount,
-            buyOrder.erc1155Token,
-            erc1155TokenId,
-            erc1155FillAmount,
-            orderHash
         );
     }
 

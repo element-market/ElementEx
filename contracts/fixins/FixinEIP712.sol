@@ -27,15 +27,8 @@ abstract contract FixinEIP712 {
     bytes32 private constant DOMAIN = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant NAME = keccak256("ElementEx");
     bytes32 private constant VERSION = keccak256("1.0.0");
-    uint256 private immutable CHAIN_ID;
-
-    constructor() {
-        uint256 chainId;
-        assembly { chainId := chainid() }
-        CHAIN_ID = chainId;
-    }
 
     function _getEIP712Hash(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked(hex"1901", keccak256(abi.encode(DOMAIN, NAME, VERSION, CHAIN_ID, address(this))), structHash));
+        return keccak256(abi.encodePacked(hex"1901", keccak256(abi.encode(DOMAIN, NAME, VERSION, block.chainid, address(this))), structHash));
     }
 }

@@ -32,4 +32,5 @@ library LibStorage {
     uint256 constant STORAGE_ID_COMMON_NFT_ORDERS = 4 << 128;
     uint256 constant STORAGE_ID_ERC721_ORDERS = 5 << 128;
     uint256 constant STORAGE_ID_ERC1155_ORDERS = 6 << 128;
+    uint256 constant STORAGE_ID_REENTRANCY_GUARD = 7 << 128;
 }

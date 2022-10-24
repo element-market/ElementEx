@@ -23,45 +23,50 @@ pragma solidity ^0.8.13;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libs/LibNFTOrder.sol";
 import "../libs/LibSignature.sol";
+import "./INFTOrdersFeature.sol";
 
 
 /// @dev Feature for interacting with ERC721 orders.
-interface IERC721OrdersFeature {
+interface IERC721OrdersFeature is INFTOrdersFeature {
 
     /// @dev Emitted whenever an `ERC721SellOrder` is filled.
+    /// @param orderHash The `ERC721SellOrder` hash.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
     /// @param erc20Token The address of the ERC20 token.
     /// @param erc20TokenAmount The amount of ERC20 token to sell.
     /// @param erc721Token The address of the ERC721 token.
     /// @param erc721TokenId The ID of the ERC721 asset.
-    /// @param orderHash The `ERC721SellOrder` hash.
     event ERC721SellOrderFilled(
+        bytes32 orderHash,
         address maker,
         address taker,
+        uint256 nonce,
         IERC20 erc20Token,
         uint256 erc20TokenAmount,
+        Fee[] fees,
         address erc721Token,
-        uint256 erc721TokenId,
-        bytes32 orderHash
+        uint256 erc721TokenId
     );
 
     /// @dev Emitted whenever an `ERC721BuyOrder` is filled.
+    /// @param orderHash The `ERC721BuyOrder` hash.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
     /// @param erc20Token The address of the ERC20 token.
     /// @param erc20TokenAmount The amount of ERC20 token to buy.
     /// @param erc721Token The address of the ERC721 token.
     /// @param erc721TokenId The ID of the ERC721 asset.
-    /// @param orderHash The `ERC721BuyOrder` hash.
     event ERC721BuyOrderFilled(
+        bytes32 orderHash,
         address maker,
         address taker,
+        uint256 nonce,
         IERC20 erc20Token,
         uint256 erc20TokenAmount,
+        Fee[] fees,
         address erc721Token,
-        uint256 erc721TokenId,
-        bytes32 orderHash
+        uint256 erc721TokenId
     );
 
     /// @dev Emitted when an `ERC721SellOrder` is pre-signed.
@@ -111,11 +116,7 @@ interface IERC721OrdersFeature {
     /// @param unwrapNativeToken If this parameter is true and the
     ///        ERC20 token of the order is e.g. WETH, unwraps the
     ///        token before transferring it to the taker.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC721OrderCallback` on `msg.sender` after
-    ///        the ERC20 tokens have been transferred to `msg.sender`
-    ///        but before transferring the ERC721 asset to the buyer.
-    function sellERC721(LibNFTOrder.NFTBuyOrder calldata buyOrder, LibSignature.Signature calldata signature, uint256 erc721TokenId, bool unwrapNativeToken, bytes calldata callbackData) external;
+    function sellERC721(LibNFTOrder.NFTBuyOrder calldata buyOrder, LibSignature.Signature calldata signature, uint256 erc721TokenId, bool unwrapNativeToken, bytes calldata takerData) external;
 
     /// @dev Buys an ERC721 asset by filling the given order.
     /// @param sellOrder The ERC721 sell order.
@@ -127,13 +128,7 @@ interface IERC721OrdersFeature {
     /// @param signature The order signature.
     /// @param taker The address to receive ERC721. If this parameter
     ///         is zero, transfer ERC721 to `msg.sender`.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC721OrderCallback` on `msg.sender` after
-    ///        the ERC721 asset has been transferred to `msg.sender`
-    ///        but before transferring the ERC20 tokens to the seller.
-    ///        Native tokens acquired during the callback can be used
-    ///        to fill the order.
-    function buyERC721Ex(LibNFTOrder.NFTSellOrder calldata sellOrder, LibSignature.Signature calldata signature, address taker, bytes calldata callbackData) external payable;
+    function buyERC721Ex(LibNFTOrder.NFTSellOrder calldata sellOrder, LibSignature.Signature calldata signature, address taker, bytes calldata takerData) external payable;
 
     /// @dev Cancel a single ERC721 order by its nonce. The caller
     ///      should be the maker of the order. Silently succeeds if
@@ -168,8 +163,8 @@ interface IERC721OrdersFeature {
     /// @param sellOrders The ERC721 sell orders.
     /// @param signatures The order signatures.
     /// @param takers The address to receive ERC721.
-    /// @param callbackData The data (if any) to pass to the taker
-    ///        callback for each order. Refer to the `callbackData`
+    /// @param takerDatas The data (if any) to pass to the taker
+    ///        callback for each order. Refer to the `takerData`
     ///        parameter to for `buyERC721`.
     /// @param revertIfIncomplete If true, reverts if this
     ///        function fails to fill any individual order.
@@ -179,7 +174,7 @@ interface IERC721OrdersFeature {
         LibNFTOrder.NFTSellOrder[] calldata sellOrders,
         LibSignature.Signature[] calldata signatures,
         address[] calldata takers,
-        bytes[] calldata callbackData,
+        bytes[] calldata takerDatas,
         bool revertIfIncomplete
     ) external payable returns (bool[] memory successes);
 

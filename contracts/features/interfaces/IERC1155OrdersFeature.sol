@@ -41,17 +41,13 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     /// @param unwrapNativeToken If this parameter is true and the
     ///        ERC20 token of the order is e.g. WETH, unwraps the
     ///        token before transferring it to the taker.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC1155OrderCallback` on `msg.sender` after
-    ///        the ERC20 tokens have been transferred to `msg.sender`
-    ///        but before transferring the ERC1155 asset to the buyer.
     function sellERC1155(
         LibNFTOrder.ERC1155BuyOrder calldata buyOrder,
         LibSignature.Signature calldata signature,
         uint256 erc1155TokenId,
         uint128 erc1155SellAmount,
         bool unwrapNativeToken,
-        bytes calldata callbackData
+        bytes calldata takerData
     )
         external;
 
@@ -75,18 +71,12 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     ///        is zero, transfer ERC1155 to `msg.sender`.
     /// @param erc1155BuyAmount The amount of the ERC1155 asset
     ///        to buy.
-    /// @param callbackData If this parameter is non-zero, invokes
-    ///        `zeroExERC1155OrderCallback` on `msg.sender` after
-    ///        the ERC1155 asset has been transferred to `msg.sender`
-    ///        but before transferring the ERC20 tokens to the seller.
-    ///        Native tokens acquired during the callback can be used
-    ///        to fill the order.
     function buyERC1155Ex(
         LibNFTOrder.ERC1155SellOrder calldata sellOrder,
         LibSignature.Signature calldata signature,
         address taker,
         uint128 erc1155BuyAmount,
-        bytes calldata callbackData
+        bytes calldata takerData
     )
         external
         payable;
@@ -132,8 +122,8 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     /// @param erc1155TokenAmounts The amounts of the ERC1155 assets
     ///        to buy for each order.
     /// @param takers The address to receive ERC1155.
-    /// @param callbackData The data (if any) to pass to the taker
-    ///        callback for each order. Refer to the `callbackData`
+    /// @param takerDatas The data (if any) to pass to the taker
+    ///        callback for each order. Refer to the `takerData`
     ///        parameter to for `buyERC1155`.
     /// @param revertIfIncomplete If true, reverts if this
     ///        function fails to fill any individual order.
@@ -144,7 +134,7 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
         LibSignature.Signature[] calldata signatures,
         address[] calldata takers,
         uint128[] calldata erc1155TokenAmounts,
-        bytes[] calldata callbackData,
+        bytes[] calldata takerDatas,
         bool revertIfIncomplete
     )
         external

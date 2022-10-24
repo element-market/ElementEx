@@ -22,9 +22,10 @@ pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libs/LibNFTOrder.sol";
+import "./INFTOrdersFeature.sol";
 
 
-interface IERC1155OrdersEvent {
+interface IERC1155OrdersEvent is INFTOrdersFeature{
 
     /// @dev Emitted whenever an `ERC1155SellOrder` is filled.
     /// @param maker The maker of the order.
@@ -36,14 +37,16 @@ interface IERC1155OrdersEvent {
     /// @param erc1155FillAmount The amount of ERC1155 asset filled.
     /// @param orderHash The `ERC1155SellOrder` hash.
     event ERC1155SellOrderFilled(
+        bytes32 orderHash,
         address maker,
         address taker,
+        uint256 nonce,
         IERC20 erc20Token,
         uint256 erc20FillAmount,
+        Fee[] fees,
         address erc1155Token,
         uint256 erc1155TokenId,
-        uint128 erc1155FillAmount,
-        bytes32 orderHash
+        uint128 erc1155FillAmount
     );
 
     /// @dev Emitted whenever an `ERC1155BuyOrder` is filled.
@@ -56,14 +59,16 @@ interface IERC1155OrdersEvent {
     /// @param erc1155FillAmount The amount of ERC1155 asset filled.
     /// @param orderHash The `ERC1155BuyOrder` hash.
     event ERC1155BuyOrderFilled(
+        bytes32 orderHash,
         address maker,
         address taker,
+        uint256 nonce,
         IERC20 erc20Token,
         uint256 erc20FillAmount,
+        Fee[] fees,
         address erc1155Token,
         uint256 erc1155TokenId,
-        uint128 erc1155FillAmount,
-        bytes32 orderHash
+        uint128 erc1155FillAmount
     );
 
     /// @dev Emitted when an `ERC1155SellOrder` is pre-signed.
