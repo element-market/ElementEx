@@ -10,7 +10,7 @@
   <th>Contract Address</th>
   </tr>
 
-  <tr><td>ElementEx</td><td>
+  <tr><td>ElementEx</td><td rowspan="14">
 
   [0x20F780A973856B93f63670377900C1d2a50a77c4](https://etherscan.io/address/0x20F780A973856B93f63670377900C1d2a50a77c4#code)
 
