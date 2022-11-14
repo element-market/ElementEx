@@ -10,7 +10,7 @@
   <th>Contract Address</th>
   </tr>
 
-  <tr><td>ElementEx</td><td rowspan="14">
+  <tr><td>ElementEx</td><td>
 
   [0x20F780A973856B93f63670377900C1d2a50a77c4](https://etherscan.io/address/0x20F780A973856B93f63670377900C1d2a50a77c4#code)
 
@@ -62,9 +62,9 @@
   </tr>
 
   <tr><td>ElementEx</td><td>
-
+    
   [0xb3e3DfCb2d9f3DdE16d78B9e6EB3538Eb32B5ae1](https://bscscan.com/address/0xb3e3DfCb2d9f3DdE16d78B9e6EB3538Eb32B5ae1#code)
-
+  
   </td></tr>
 
   <tr><td>BatchSignedERC721OrdersFeature</td><td>
