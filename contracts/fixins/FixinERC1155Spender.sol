@@ -18,14 +18,14 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 
 /// @dev Helpers for moving ERC1155 assets around.
 abstract contract FixinERC1155Spender {
 
     // Mask of the lower 20 bytes of a bytes32.
-    uint256 constant private ADDRESS_MASK = 0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff;
+    uint256 constant private ADDRESS_MASK = (1 << 160) - 1;
 
     /// @dev Transfers an ERC1155 asset from `owner` to `to`.
     /// @param token The address of the ERC1155 token contract.
@@ -42,6 +42,7 @@ abstract contract FixinERC1155Spender {
     )
         internal
     {
+        require(token.code.length != 0, "_transferERC1155/INVALID_TOKEN");
         uint256 success;
         assembly {
             let ptr := mload(0x40) // free memory pointer
@@ -55,15 +56,7 @@ abstract contract FixinERC1155Spender {
             mstore(add(ptr, 0x84), 0xa0)
             mstore(add(ptr, 0xa4), 0)
 
-            success := call(
-                gas(),
-                and(token, ADDRESS_MASK),
-                0,
-                ptr,
-                0xc4,
-                0,
-                0
-            )
+            success := call(gas(), token, 0, ptr, 0xc4, 0, 0)
         }
         require(success != 0, "_transferERC1155/TRANSFER_FAILED");
     }

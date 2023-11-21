@@ -18,7 +18,7 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../libs/LibNFTOrder.sol";
@@ -48,23 +48,15 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
         uint128 erc1155SellAmount,
         bool unwrapNativeToken,
         bytes calldata takerData
-    )
-        external;
+    ) external;
 
-    /// @dev Buys an ERC1155 asset by filling the given order.
-    /// @param sellOrder The ERC1155 sell order.
-    /// @param signature The order signature.
-    /// @param erc1155BuyAmount The amount of the ERC1155 asset
-    ///        to buy.
-    function buyERC1155(
-        LibNFTOrder.ERC1155SellOrder calldata sellOrder,
-        LibSignature.Signature calldata signature,
-        uint128 erc1155BuyAmount
-    )
-        external
-        payable;
+    /// @dev Sells multiple ERC1155 assets by filling the
+    ///      given orders.
+    /// @param datas The encoded `sellERC1155` calldatas.
+    /// @param revertIfIncomplete If true, reverts if this
+    ///        function fails to fill any individual order.
+    function batchSellERC1155s(bytes[] calldata datas, bool revertIfIncomplete) external;
 
-    /// @dev Buys an ERC1155 asset by filling the given order.
     /// @param sellOrder The ERC1155 sell order.
     /// @param signature The order signature.
     /// @param taker The address to receive ERC1155. If this parameter
@@ -77,9 +69,7 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
         address taker,
         uint128 erc1155BuyAmount,
         bytes calldata takerData
-    )
-        external
-        payable;
+    ) external payable;
 
     /// @dev Cancel a single ERC1155 order by its nonce. The caller
     ///      should be the maker of the order. Silently succeeds if
@@ -94,26 +84,6 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     ///      cancelled.
     /// @param orderNonces The order nonces.
     function batchCancelERC1155Orders(uint256[] calldata orderNonces) external;
-
-    /// @dev Buys multiple ERC1155 assets by filling the
-    ///      given orders.
-    /// @param sellOrders The ERC1155 sell orders.
-    /// @param signatures The order signatures.
-    /// @param erc1155TokenAmounts The amounts of the ERC1155 assets
-    ///        to buy for each order.
-    /// @param revertIfIncomplete If true, reverts if this
-    ///        function fails to fill any individual order.
-    /// @return successes An array of booleans corresponding to whether
-    ///         each order in `orders` was successfully filled.
-    function batchBuyERC1155s(
-        LibNFTOrder.ERC1155SellOrder[] calldata sellOrders,
-        LibSignature.Signature[] calldata signatures,
-        uint128[] calldata erc1155TokenAmounts,
-        bool revertIfIncomplete
-    )
-        external
-        payable
-        returns (bool[] memory successes);
 
     /// @dev Buys multiple ERC1155 assets by filling the
     ///      given orders.
@@ -136,10 +106,7 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
         uint128[] calldata erc1155TokenAmounts,
         bytes[] calldata takerDatas,
         bool revertIfIncomplete
-    )
-        external
-        payable
-        returns (bool[] memory successes);
+    ) external payable returns (bool[] memory successes);
 
     /// @dev Callback for the ERC1155 `safeTransferFrom` function.
     ///      This callback can be used to sell an ERC1155 asset if
@@ -162,9 +129,7 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
         uint256 tokenId,
         uint256 value,
         bytes calldata data
-    )
-        external
-        returns (bytes4 success);
+    ) external returns (bytes4 success);
 
     /// @dev Approves an ERC1155 sell order on-chain. After pre-signing
     ///      the order, the `PRESIGNED` signature type will become
@@ -185,9 +150,17 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     function validateERC1155SellOrderSignature(
         LibNFTOrder.ERC1155SellOrder calldata order,
         LibSignature.Signature calldata signature
-    )
-        external
-        view;
+    ) external view;
+
+    /// @dev Checks whether the given signature is valid for the
+    ///      the given ERC1155 sell order. Reverts if not.
+    /// @param order The ERC1155 sell order.
+    /// @param signature The signature to validate.
+    function validateERC1155SellOrderSignature(
+        LibNFTOrder.ERC1155SellOrder calldata order,
+        LibSignature.Signature calldata signature,
+        bytes calldata takerData
+    ) external view;
 
     /// @dev Checks whether the given signature is valid for the
     ///      the given ERC1155 buy order. Reverts if not.
@@ -196,9 +169,17 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     function validateERC1155BuyOrderSignature(
         LibNFTOrder.ERC1155BuyOrder calldata order,
         LibSignature.Signature calldata signature
-    )
-        external
-        view;
+    ) external view;
+
+    /// @dev Checks whether the given signature is valid for the
+    ///      the given ERC1155 buy order. Reverts if not.
+    /// @param order The ERC1155 buy order.
+    /// @param signature The signature to validate.
+    function validateERC1155BuyOrderSignature(
+        LibNFTOrder.ERC1155BuyOrder calldata order,
+        LibSignature.Signature calldata signature,
+        bytes calldata takerData
+    ) external view;
 
     /// @dev Get the order info for an ERC1155 sell order.
     /// @param order The ERC1155 sell order.
@@ -257,34 +238,12 @@ interface IERC1155OrdersFeature is IERC1155OrdersEvent {
     /// @return profit The amount of profit earned by the caller
     ///         of this function (denominated in the ERC20 token
     ///         of the matched orders).
-    function matchERC1155Orders(
+    function matchERC1155Order(
         LibNFTOrder.ERC1155SellOrder calldata sellOrder,
         LibNFTOrder.ERC1155BuyOrder calldata buyOrder,
         LibSignature.Signature calldata sellOrderSignature,
-        LibSignature.Signature calldata buyOrderSignature
-    )
-        external
-        returns (uint256 profit);
-
-    /// @dev Matches pairs of complementary orders that have
-    ///      non-negative spreads. Each order is filled at
-    ///      their respective price, and the matcher receives
-    ///      a profit denominated in the ERC20 token.
-    /// @param sellOrders Orders selling ERC1155 assets.
-    /// @param buyOrders Orders buying ERC1155 assets.
-    /// @param sellOrderSignatures Signatures for the sell orders.
-    /// @param buyOrderSignatures Signatures for the buy orders.
-    /// @return profits The amount of profit earned by the caller
-    ///         of this function for each pair of matched orders
-    ///         (denominated in the ERC20 token of the order pair).
-    /// @return successes An array of booleans corresponding to
-    ///         whether each pair of orders was successfully matched.
-    function batchMatchERC1155Orders(
-        LibNFTOrder.ERC1155SellOrder[] calldata sellOrders,
-        LibNFTOrder.ERC1155BuyOrder[] calldata buyOrders,
-        LibSignature.Signature[] calldata sellOrderSignatures,
-        LibSignature.Signature[] calldata buyOrderSignatures
-    )
-        external
-        returns (uint256[] memory profits, bool[] memory successes);
+        LibSignature.Signature calldata buyOrderSignature,
+        bytes calldata sellTakerData,
+        bytes calldata buyTakerData
+    ) external returns (uint256 profit);
 }

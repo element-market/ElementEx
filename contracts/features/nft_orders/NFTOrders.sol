@@ -18,15 +18,17 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../fixins/FixinEIP712.sol";
 import "../../fixins/FixinTokenSpender.sol";
 import "../../vendor/IEtherToken.sol";
+import "../../vendor/IPropertyValidator.sol";
 import "../../vendor/IFeeRecipient.sol";
 import "../libs/LibSignature.sol";
 import "../libs/LibNFTOrder.sol";
+import "../libs/LibStructure.sol";
 
 
 /// @dev Abstract base contract inherited by ERC721OrdersFeature and NFTOrders
@@ -40,7 +42,8 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
     IEtherToken internal immutable WETH;
     /// @dev The implementation address of this feature.
     address internal immutable _implementation;
-
+    /// @dev The magic return value indicating the success of a `validateProperty`.
+    bytes4 private constant PROPERTY_CALLBACK_MAGIC_BYTES = IPropertyValidator.validateProperty.selector;
     /// @dev The magic return value indicating the success of a `receiveZeroExFeeCallback`.
     bytes4 private constant FEE_CALLBACK_MAGIC_BYTES = IFeeRecipient.receiveZeroExFeeCallback.selector;
 
@@ -51,11 +54,6 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         _implementation = address(this);
     }
 
-    event TakerDataEmitted(
-        bytes32 orderHash,
-        bytes takerData
-    );
-
     struct SellParams {
         uint128 sellAmount;
         uint256 tokenId;
@@ -65,46 +63,26 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         bytes takerData;
     }
 
-    struct BuyParams {
-        uint128 buyAmount;
-        uint256 ethAvailable;
-        address taker;
-        bytes takerData;
-    }
-
     // Core settlement logic for selling an NFT asset.
     function _sellNFT(
         LibNFTOrder.NFTBuyOrder memory buyOrder,
         LibSignature.Signature memory signature,
         SellParams memory params
     ) internal returns (uint256 erc20FillAmount, bytes32 orderHash) {
-        LibNFTOrder.OrderInfo memory orderInfo = _getOrderInfo(buyOrder);
+        LibNFTOrder.OrderInfoV2 memory orderInfo = _getOrderInfo(buyOrder);
         orderHash = orderInfo.orderHash;
 
         // Check that the order can be filled.
-        _validateBuyOrder(buyOrder, signature, orderInfo, params.taker, params.tokenId, params.takerData);
-
-        // Check amount.
-        if (params.sellAmount > orderInfo.remainingAmount) {
-            revert("_sellNFT/EXCEEDS_REMAINING_AMOUNT");
-        }
-
-        // Update the order state.
-        _updateOrderState(buyOrder.asNFTSellOrder(), orderInfo.orderHash, params.sellAmount);
+        _validateBuyOrder(buyOrder, signature, orderInfo, params.taker, params.tokenId, params.sellAmount, params.takerData);
 
         // Calculate erc20 pay amount.
         erc20FillAmount = (params.sellAmount == orderInfo.orderAmount) ?
             buyOrder.erc20TokenAmount : buyOrder.erc20TokenAmount * params.sellAmount / orderInfo.orderAmount;
 
-        if (params.unwrapNativeToken) {
-            // The ERC20 token must be WETH for it to be unwrapped.
-            require(buyOrder.erc20Token == WETH, "_sellNFT/ERC20_TOKEN_MISMATCH_ERROR");
-
+        if (params.unwrapNativeToken && buyOrder.erc20Token == WETH) {
             // Transfer the WETH from the maker to the Exchange Proxy
             // so we can unwrap it before sending it to the seller.
-            // TODO: Probably safe to just use WETH.transferFrom for some
-            //       small gas savings
-            _transferERC20TokensFrom(WETH, buyOrder.maker, address(this), erc20FillAmount);
+            _transferERC20TokensFrom(address(WETH), buyOrder.maker, address(this), erc20FillAmount);
 
             // Unwrap WETH into ETH.
             WETH.withdraw(erc20FillAmount);
@@ -113,7 +91,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             _transferEth(payable(params.taker), erc20FillAmount);
         } else {
             // Transfer the ERC20 token from the buyer to the seller.
-            _transferERC20TokensFrom(buyOrder.erc20Token, buyOrder.maker, params.taker, erc20FillAmount);
+            _transferERC20TokensFrom(address(buyOrder.erc20Token), buyOrder.maker, params.taker, erc20FillAmount);
         }
 
         // Transfer the NFT asset to the buyer.
@@ -125,39 +103,36 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
         // The buyer pays the order fees.
         _payFees(buyOrder.asNFTSellOrder(), buyOrder.maker, params.sellAmount, orderInfo.orderAmount, false);
-
-        // Emit TakerData Event.
-        if (params.takerData.length > 0x20) {
-            _emitEventTakerData(orderHash, params.takerData);
-        }
     }
 
     // Core settlement logic for buying an NFT asset.
     function _buyNFT(
         LibNFTOrder.NFTSellOrder memory sellOrder,
         LibSignature.Signature memory signature,
-        uint128 buyAmount
+        uint128 buyAmount,
+        address taker,
+        bytes memory takerData
     ) internal returns (uint256 erc20FillAmount, bytes32 orderHash) {
-        LibNFTOrder.OrderInfo memory orderInfo = _getOrderInfo(sellOrder);
+        LibNFTOrder.OrderInfoV2 memory orderInfo = _getOrderInfo(sellOrder);
         orderHash = orderInfo.orderHash;
 
         // Check that the order can be filled.
-        _validateSellOrder(sellOrder, signature, orderInfo, msg.sender);
+        _validateSellOrder(sellOrder, signature, orderInfo, taker, buyAmount, takerData);
 
-        // Check amount.
-        if (buyAmount > orderInfo.remainingAmount) {
-            revert("_buyNFT/EXCEEDS_REMAINING_AMOUNT");
+        // Dutch Auction
+        if (sellOrder.expiry >> 252 == LibStructure.ORDER_KIND_DUTCH_AUCTION) {
+            uint256 count = (sellOrder.expiry >> 64) & 0xffffffff;
+            if (count > 0) {
+                _resetDutchAuctionERC20AmountAndFees(sellOrder, count);
+            }
         }
-
-        // Update the order state.
-        _updateOrderState(sellOrder, orderInfo.orderHash, buyAmount);
 
         // Calculate erc20 pay amount.
         erc20FillAmount = (buyAmount == orderInfo.orderAmount) ?
             sellOrder.erc20TokenAmount : _ceilDiv(sellOrder.erc20TokenAmount * buyAmount, orderInfo.orderAmount);
 
-        // Transfer the NFT asset to the buyer (`msg.sender`).
-        _transferNFTAssetFrom(sellOrder.nft, sellOrder.maker, msg.sender, sellOrder.nftId, buyAmount);
+        // Transfer the NFT asset to the buyer.
+        _transferNFTAssetFrom(sellOrder.nft, sellOrder.maker, taker, sellOrder.nftId, buyAmount);
 
         if (address(sellOrder.erc20Token) == NATIVE_TOKEN_ADDRESS) {
             // Transfer ETH to the seller.
@@ -167,155 +142,21 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             _payFees(sellOrder, address(this), buyAmount, orderInfo.orderAmount, true);
         } else {
             // Transfer ERC20 token from the buyer to the seller.
-            _transferERC20TokensFrom(sellOrder.erc20Token, msg.sender, sellOrder.maker, erc20FillAmount);
+            _transferERC20TokensFrom(address(sellOrder.erc20Token), msg.sender, sellOrder.maker, erc20FillAmount);
 
             // The buyer pays fees.
             _payFees(sellOrder, msg.sender, buyAmount, orderInfo.orderAmount, false);
         }
     }
 
-    function _buyNFTEx(
-        LibNFTOrder.NFTSellOrder memory sellOrder,
-        LibSignature.Signature memory signature,
-        BuyParams memory params
-    ) internal returns (uint256 erc20FillAmount, bytes32 orderHash) {
-        LibNFTOrder.OrderInfo memory orderInfo = _getOrderInfo(sellOrder);
-        orderHash = orderInfo.orderHash;
-
-        // Check that the order can be filled.
-        _validateSellOrder(sellOrder, signature, orderInfo, params.taker);
-
-        // Check amount.
-        if (params.buyAmount > orderInfo.remainingAmount) {
-            revert("_buyNFTEx/EXCEEDS_REMAINING_AMOUNT");
-        }
-
-        // Update the order state.
-        _updateOrderState(sellOrder, orderInfo.orderHash, params.buyAmount);
-
-        // Dutch Auction
-        if (sellOrder.expiry >> 252 == 1) {
-            uint256 count = (sellOrder.expiry >> 64) & 0xffffffff;
-            if (count > 0) {
-                _resetDutchAuctionTokenAmountAndFees(sellOrder, count);
-            }
-        }
-
-        // Calculate erc20 pay amount.
-        erc20FillAmount = (params.buyAmount == orderInfo.orderAmount) ?
-            sellOrder.erc20TokenAmount : _ceilDiv(sellOrder.erc20TokenAmount * params.buyAmount, orderInfo.orderAmount);
-
-        // Transfer the NFT asset to the buyer.
-        _transferNFTAssetFrom(sellOrder.nft, sellOrder.maker, params.taker, sellOrder.nftId, params.buyAmount);
-
-        uint256 ethAvailable = params.ethAvailable;
-        if (address(sellOrder.erc20Token) == NATIVE_TOKEN_ADDRESS) {
-            uint256 totalPaid = erc20FillAmount + _calcTotalFeesPaid(sellOrder.fees, params.buyAmount, orderInfo.orderAmount);
-            if (ethAvailable < totalPaid) {
-                // Transfer WETH from the buyer to this contract.
-                uint256 withDrawAmount = totalPaid - ethAvailable;
-                _transferERC20TokensFrom(WETH, msg.sender, address(this), withDrawAmount);
-
-                // Unwrap WETH into ETH.
-                WETH.withdraw(withDrawAmount);
-            }
-
-            // Transfer ETH to the seller.
-            _transferEth(payable(sellOrder.maker), erc20FillAmount);
-
-            // Fees are paid from the EP's current balance of ETH.
-            _payFees(sellOrder, address(this), params.buyAmount, orderInfo.orderAmount, true);
-        } else if (sellOrder.erc20Token == WETH) {
-            uint256 totalFeesPaid = _calcTotalFeesPaid(sellOrder.fees, params.buyAmount, orderInfo.orderAmount);
-            if (ethAvailable > totalFeesPaid) {
-                uint256 depositAmount = ethAvailable - totalFeesPaid;
-                if (depositAmount < erc20FillAmount) {
-                    // Transfer WETH from the buyer to this contract.
-                    _transferERC20TokensFrom(WETH, msg.sender, address(this), (erc20FillAmount - depositAmount));
-                } else {
-                    depositAmount = erc20FillAmount;
-                }
-
-                // Wrap ETH.
-                WETH.deposit{value: depositAmount}();
-
-                // Transfer WETH to the seller.
-                _transferERC20Tokens(WETH, sellOrder.maker, erc20FillAmount);
-
-                // Fees are paid from the EP's current balance of ETH.
-                _payFees(sellOrder, address(this), params.buyAmount, orderInfo.orderAmount, true);
-            } else {
-                // Transfer WETH from the buyer to the seller.
-                _transferERC20TokensFrom(WETH, msg.sender, sellOrder.maker, erc20FillAmount);
-
-                if (ethAvailable > 0) {
-                    if (ethAvailable < totalFeesPaid) {
-                        // Transfer WETH from the buyer to this contract.
-                        uint256 value = totalFeesPaid - ethAvailable;
-                        _transferERC20TokensFrom(WETH, msg.sender, address(this), value);
-
-                        // Unwrap WETH into ETH.
-                        WETH.withdraw(value);
-                    }
-
-                    // Fees are paid from the EP's current balance of ETH.
-                    _payFees(sellOrder, address(this), params.buyAmount, orderInfo.orderAmount, true);
-                } else {
-                    // The buyer pays fees using WETH.
-                    _payFees(sellOrder, msg.sender, params.buyAmount, orderInfo.orderAmount, false);
-                }
-            }
-        } else {
-            // Transfer ERC20 token from the buyer to the seller.
-            _transferERC20TokensFrom(sellOrder.erc20Token, msg.sender, sellOrder.maker, erc20FillAmount);
-
-            // The buyer pays fees.
-            _payFees(sellOrder, msg.sender, params.buyAmount, orderInfo.orderAmount, false);
-        }
-
-        // Emit TakerData Event.
-        if (params.takerData.length > 0x20) {
-            _emitEventTakerData(orderHash, params.takerData);
-        }
-    }
-
-    function _emitEventTakerData(bytes32 orderHash, bytes memory takerData) internal {
-        uint256 startPoint;
-        uint256 endPoint;
-        assembly {
-            let data0 := mload(add(takerData, 0x20))
-            // data0 == [4 bytes(magic bytes) + 24 bytes(unused) + 2 bytes(endPoint) + 2 bytes(startPoint)]
-            if eq(shr(224, data0), 0xfeefeefe) {
-                startPoint := and(data0, 0xffff)
-                endPoint := and(shr(16, data0), 0xffff)
-            }
-        }
-
-        if (startPoint >= endPoint || (endPoint + 0x20) > takerData.length) {
-            return;
-        }
-
-        bytes memory data;
-        bytes32 dataBefore;
-        assembly {
-            data := add(add(takerData, 0x20), startPoint)
-            dataBefore := mload(data)
-            mstore(data, sub(endPoint, startPoint))
-        }
-
-        emit TakerDataEmitted(orderHash, data);
-
-        assembly {
-            mstore(data, dataBefore)
-        }
-    }
-
     function _validateSellOrder(
         LibNFTOrder.NFTSellOrder memory sellOrder,
         LibSignature.Signature memory signature,
-        LibNFTOrder.OrderInfo memory orderInfo,
-        address taker
-    ) internal view {
+        LibNFTOrder.OrderInfoV2 memory orderInfo,
+        address taker,
+        uint128 buyAmount,
+        bytes memory takerData
+    ) internal {
         // Taker must match the order taker, if one is specified.
         require(sellOrder.taker == address(0) || sellOrder.taker == taker, "_validateOrder/ONLY_TAKER");
 
@@ -323,37 +164,70 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         // or been filled.
         require(orderInfo.status == LibNFTOrder.OrderStatus.FILLABLE, "_validateOrder/ORDER_NOT_FILL");
 
+        // Check amount.
+        require(buyAmount <= orderInfo.remainingAmount, "_validateOrder/EXCEEDS_REMAINING_AMOUNT");
+
+        // Update the order state.
+        _updateOrderState(sellOrder, orderInfo.orderHash, buyAmount);
+
         // Check the signature.
-        _validateOrderSignature(orderInfo.orderHash, signature, sellOrder.maker);
+        if (
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK ||
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK_1271
+        ) {
+            (bytes32 validateHash, ) = _getBulkValidateHashAndExtraData(false, orderInfo.structHash, takerData);
+            _validateOrderSignature(validateHash, signature, sellOrder.maker);
+        } else {
+            _validateOrderSignature(orderInfo.orderHash, signature, sellOrder.maker);
+        }
     }
 
     function _validateBuyOrder(
         LibNFTOrder.NFTBuyOrder memory buyOrder,
         LibSignature.Signature memory signature,
-        LibNFTOrder.OrderInfo memory orderInfo,
+        LibNFTOrder.OrderInfoV2 memory orderInfo,
         address taker,
         uint256 tokenId,
+        uint128 sellAmount,
         bytes memory takerData
-    ) internal view {
+    ) internal {
         // The ERC20 token cannot be ETH.
-        require(address(buyOrder.erc20Token) != NATIVE_TOKEN_ADDRESS, "_validateBuyOrder/TOKEN_MISMATCH");
+        require(address(buyOrder.erc20Token) != NATIVE_TOKEN_ADDRESS, "_validateOrder/TOKEN_MISMATCH");
 
         // Taker must match the order taker, if one is specified.
-        require(buyOrder.taker == address(0) || buyOrder.taker == taker, "_validateBuyOrder/ONLY_TAKER");
+        require(buyOrder.taker == address(0) || buyOrder.taker == taker, "_validateOrder/ONLY_TAKER");
 
         // Check that the order is valid and has not expired, been cancelled,
         // or been filled.
         require(orderInfo.status == LibNFTOrder.OrderStatus.FILLABLE, "_validateOrder/ORDER_NOT_FILL");
 
-        // Check that the asset with the given token ID satisfies the properties
-        // specified by the order.
-        _validateOrderProperties(buyOrder, tokenId, takerData);
+        // Check amount.
+        require(sellAmount <= orderInfo.remainingAmount, "_validateOrder/EXCEEDS_REMAINING_AMOUNT");
 
-        // Check the signature.
-        _validateOrderSignature(orderInfo.orderHash, signature, buyOrder.maker);
+        // Update the order state.
+        _updateOrderState(buyOrder, orderInfo.orderHash, sellAmount);
+
+        if (
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK ||
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK_1271
+        ) {
+            (bytes32 validateHash, bytes memory extraData) = _getBulkValidateHashAndExtraData(true, orderInfo.structHash, takerData);
+
+            // Validate properties.
+            _validateOrderProperties(buyOrder, orderInfo.orderHash, tokenId, extraData);
+
+            // Check the signature.
+            _validateOrderSignature(validateHash, signature, buyOrder.maker);
+        } else {
+            // Validate properties.
+            _validateOrderProperties(buyOrder, orderInfo.orderHash, tokenId, takerData);
+
+            // Check the signature.
+            _validateOrderSignature(orderInfo.orderHash, signature, buyOrder.maker);
+        }
     }
 
-    function _resetDutchAuctionTokenAmountAndFees(LibNFTOrder.NFTSellOrder memory order, uint256 count) internal view {
+    function _resetDutchAuctionERC20AmountAndFees(LibNFTOrder.NFTSellOrder memory order, uint256 count) internal view {
         require(count <= 100000000, "COUNT_OUT_OF_SIDE");
 
         uint256 listingTime = (order.expiry >> 32) & 0xffffffff;
@@ -371,7 +245,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         }
     }
 
-    function _resetEnglishAuctionTokenAmountAndFees(
+    function _resetEnglishAuctionERC20AmountAndFees(
         LibNFTOrder.NFTSellOrder memory sellOrder,
         uint256 buyERC20Amount,
         uint256 fillAmount,
@@ -422,7 +296,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
         uint128 orderAmount,
         bool useNativeToken
     ) internal returns (uint256 totalFeesPaid) {
-        for (uint256 i = 0; i < order.fees.length; i++) {
+        for (uint256 i; i < order.fees.length; ) {
             LibNFTOrder.Fee memory fee = order.fees[i];
 
             uint256 feeFillAmount = (fillAmount == orderAmount) ? fee.amount : fee.amount * fillAmount / orderAmount;
@@ -433,7 +307,7 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             } else {
                 if (feeFillAmount > 0) {
                     // Transfer ERC20 token from payer to recipient.
-                    _transferERC20TokensFrom(order.erc20Token, payer, fee.recipient, feeFillAmount);
+                    _transferERC20TokensFrom(address(order.erc20Token), payer, fee.recipient, feeFillAmount);
                 }
             }
 
@@ -442,6 +316,8 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
             // the fee recipient is a contract that implements the
             // `IFeeRecipient` interface.
             if (fee.feeData.length > 0) {
+                require(fee.recipient.code.length != 0, "_payFees/INVALID_FEE_RECIPIENT");
+
                 // Invoke the callback
                 bytes4 callbackResult = IFeeRecipient(fee.recipient).receiveZeroExFeeCallback(
                     useNativeToken ? NATIVE_TOKEN_ADDRESS : address(order.erc20Token),
@@ -455,40 +331,188 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
 
             // Sum the fees paid
             totalFeesPaid += feeFillAmount;
+            unchecked { i++; }
         }
         return totalFeesPaid;
     }
 
-    function _validateOrderProperties(LibNFTOrder.NFTBuyOrder memory order, uint256 tokenId, bytes memory takerData) internal view {
+    function _validateOrderProperties(
+        LibNFTOrder.NFTBuyOrder memory order,
+        bytes32 orderHash,
+        uint256 tokenId,
+        bytes memory data
+    ) internal view {
         // If no properties are specified, check that the given
         // `tokenId` matches the one specified in the order.
         if (order.nftProperties.length == 0) {
             require(tokenId == order.nftId, "_validateProperties/TOKEN_ID_ERR");
         } else {
             // Validate each property
-            for (uint256 i = 0; i < order.nftProperties.length; i++) {
+            for (uint256 i; i < order.nftProperties.length; ) {
                 LibNFTOrder.Property memory property = order.nftProperties[i];
                 // `address(0)` is interpreted as a no-op. Any token ID
                 // will satisfy a property with `propertyValidator == address(0)`.
                 if (address(property.propertyValidator) != address(0)) {
+                    require(address(property.propertyValidator).code.length != 0, "INVALID_PROPERTY_VALIDATOR");
+
                     // Call the property validator and throw a descriptive error
                     // if the call reverts.
-                    try property.propertyValidator.validateProperty(order.nft, tokenId, property.propertyData, takerData) {
-                    } catch (bytes memory /* reason */) {
-                        revert("PROPERTY_VALIDATION_FAILED");
-                    }
+                    bytes4 result = property.propertyValidator.validateProperty(
+                        order.nft, tokenId, orderHash, property.propertyData, data
+                    );
+
+                    // Check for the magic success bytes
+                    require(result == PROPERTY_CALLBACK_MAGIC_BYTES, "PROPERTY_VALIDATION_FAILED");
                 }
+                unchecked { i++; }
             }
         }
     }
 
-    /// @dev Validates that the given signature is valid for the
-    ///      given maker and order hash. Reverts if the signature
-    ///      is not valid.
-    /// @param orderHash The hash of the order that was signed.
-    /// @param signature The signature to check.
-    /// @param maker The maker of the order.
-    function _validateOrderSignature(bytes32 orderHash, LibSignature.Signature memory signature, address maker) internal virtual view;
+    function _getBulkValidateHashAndExtraData(
+        bool isBuyOrder,
+        bytes32 leaf,
+        bytes memory takerData
+    ) internal view returns(
+        bytes32 validateHash,
+        bytes memory data
+    ) {
+        uint256 proofsLength;
+        bytes32 root = leaf;
+        assembly {
+            // takerData = 32bytes[length] + 32bytes[head] + [proofsData] + [data]
+            let ptrHead := add(takerData, 0x20)
+
+            // head = 4bytes[dataLength] + 1bytes[proofsLength] + 24bytes[unused] + 3bytes[proofsKey]
+            let head := mload(ptrHead)
+            let dataLength := shr(224, head)
+            proofsLength := byte(4, head)
+            let proofsKey := and(head, 0xffffff)
+
+            // require(proofsLength != 0)
+            if iszero(proofsLength) {
+                _revertTakerDataError()
+            }
+
+            // require(32 + proofsLength * 32 + dataLength == takerData.length)
+            if iszero(eq(add(0x20, add(shl(5, proofsLength), dataLength)), mload(takerData))) {
+                _revertTakerDataError()
+            }
+
+            // Compute remaining proofs.
+            let ptrAfterHead := add(ptrHead, 0x20)
+            let ptrProofNode := ptrAfterHead
+
+            for { let i } lt(i, proofsLength) { i := add(i, 1) } {
+                // Check if the current bit of the key is set.
+                switch and(shr(i, proofsKey), 0x1)
+                case 0 {
+                    mstore(ptrHead, root)
+                    mstore(ptrAfterHead, mload(ptrProofNode))
+                }
+                case 1 {
+                    mstore(ptrHead, mload(ptrProofNode))
+                    mstore(ptrAfterHead, root)
+                }
+
+                root := keccak256(ptrHead, 0x40)
+                ptrProofNode := add(ptrProofNode, 0x20)
+            }
+
+            data := sub(ptrProofNode, 0x20)
+            mstore(data, dataLength)
+
+            function _revertTakerDataError() {
+                // revert("TakerData error")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x0000000f54616b657244617461206572726f7200000000000000000000000000)
+                mstore(0x60, 0)
+                revert(0, 0x64)
+            }
+        }
+
+        if (isBuyOrder) {
+            validateHash = _getEIP712Hash(
+                keccak256(abi.encode(_getBulkBuyOrderTypeHash(proofsLength), root))
+            );
+        } else {
+            validateHash = _getEIP712Hash(
+                keccak256(abi.encode(_getBulkSellOrderTypeHash(proofsLength), root))
+            );
+        }
+        return (validateHash, data);
+    }
+
+    function _isOrderPreSigned(bytes32 orderHash, address maker) internal virtual view returns(bool);
+
+    function _validateOrderSignature(
+        bytes32 hash, LibSignature.Signature memory signature, address maker
+    ) internal view {
+        if (
+            signature.signatureType == LibSignature.SignatureType.EIP712 ||
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK
+        ) {
+            require(maker != address(0), "INVALID_SIGNER");
+            require(maker == ecrecover(hash, signature.v, signature.r, signature.s), "INVALID_SIGNATURE");
+        } else if (
+            signature.signatureType == LibSignature.SignatureType.EIP712_1271 ||
+            signature.signatureType == LibSignature.SignatureType.EIP712_BULK_1271
+        ) {
+            uint256 v = signature.v;
+            bytes32 r = signature.r;
+            bytes32 s = signature.s;
+            assembly {
+                let ptr := mload(0x40) // free memory pointer
+
+                // selector for `isValidSignature(bytes32,bytes)`
+                mstore(ptr, 0x1626ba7e)
+                mstore(add(ptr, 0x20), hash)
+                mstore(add(ptr, 0x40), 0x40)
+                mstore(add(ptr, 0x60), 0x41)
+                mstore(add(ptr, 0x80), r)
+                mstore(add(ptr, 0xa0), s)
+                mstore(add(ptr, 0xc0), shl(248, v))
+
+                if iszero(extcodesize(maker)) {
+                    _revertInvalidSigner()
+                }
+
+                // Call signer with `isValidSignature` to validate signature.
+                if iszero(staticcall(gas(), maker, add(ptr, 0x1c), 0xa5, ptr, 0x20)) {
+                    _revertInvalidSignature()
+                }
+
+                // Check for returnData.
+                if iszero(eq(mload(ptr), 0x1626ba7e00000000000000000000000000000000000000000000000000000000)) {
+                    _revertInvalidSignature()
+                }
+
+                function _revertInvalidSigner() {
+                    // revert("INVALID_SIGNER")
+                    mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x40, 0x0000000e494e56414c49445f5349474e45520000000000000000000000000000)
+                    mstore(0x60, 0)
+                    revert(0, 0x64)
+                }
+
+                function _revertInvalidSignature() {
+                    // revert("INVALID_SIGNATURE")
+                    mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x40, 0x00000011494e56414c49445f5349474e41545552450000000000000000000000)
+                    mstore(0x60, 0)
+                    revert(0, 0x64)
+                }
+            }
+        } else if (signature.signatureType == LibSignature.SignatureType.PRESIGNED) {
+            require(maker != address(0), "INVALID_SIGNER");
+            require(_isOrderPreSigned(hash, maker), "PRESIGNED_INVALID_SIGNER");
+        } else {
+            revert("INVALID_SIGNATURE_TYPE");
+        }
+    }
 
     /// @dev Transfers an NFT asset.
     /// @param token The address of the NFT contract.
@@ -507,13 +531,25 @@ abstract contract NFTOrders is FixinEIP712, FixinTokenSpender {
     ///        that the order has been filled by.
     function _updateOrderState(LibNFTOrder.NFTSellOrder memory order, bytes32 orderHash, uint128 fillAmount) internal virtual;
 
+    /// @dev Updates storage to indicate that the given order
+    ///      has been filled by the given amount.
+    /// @param order The order that has been filled.
+    /// @param orderHash The hash of `order`.
+    /// @param fillAmount The amount (denominated in the NFT asset)
+    ///        that the order has been filled by.
+    function _updateOrderState(LibNFTOrder.NFTBuyOrder memory order, bytes32 orderHash, uint128 fillAmount) internal virtual;
+
     /// @dev Get the order info for an NFT sell order.
     /// @param nftSellOrder The NFT sell order.
     /// @return orderInfo Info about the order.
-    function _getOrderInfo(LibNFTOrder.NFTSellOrder memory nftSellOrder) internal virtual view returns (LibNFTOrder.OrderInfo memory);
+    function _getOrderInfo(LibNFTOrder.NFTSellOrder memory nftSellOrder) internal virtual view returns (LibNFTOrder.OrderInfoV2 memory);
 
     /// @dev Get the order info for an NFT buy order.
     /// @param nftBuyOrder The NFT buy order.
     /// @return orderInfo Info about the order.
-    function _getOrderInfo(LibNFTOrder.NFTBuyOrder memory nftBuyOrder) internal virtual view returns (LibNFTOrder.OrderInfo memory);
+    function _getOrderInfo(LibNFTOrder.NFTBuyOrder memory nftBuyOrder) internal virtual view returns (LibNFTOrder.OrderInfoV2 memory);
+
+    function _getBulkBuyOrderTypeHash(uint256 height) internal virtual pure returns (bytes32);
+
+    function _getBulkSellOrderTypeHash(uint256 height) internal virtual pure returns (bytes32);
 }

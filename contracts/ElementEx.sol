@@ -20,56 +20,54 @@
 
 pragma solidity ^0.8.13;
 
-import "./migrations/LibBootstrap.sol";
-import "./features/BootstrapFeature.sol";
+import "./features/interfaces/IOwnableFeature.sol";
+import "./features/interfaces/ISimpleFunctionRegistryFeature.sol";
 import "./storage/LibProxyStorage.sol";
-
+import "./storage/LibSimpleFunctionRegistryStorage.sol";
+import "./storage/LibOwnableStorage.sol";
 
 /// @dev An extensible proxy contract that serves as a universal entry point for
 ///      interacting with the 0x protocol.
 contract ElementEx {
 
-    /// @dev Construct this contract and register the `BootstrapFeature` feature.
-    ///      After constructing this contract, `bootstrap()` should be called
-    ///      by `bootstrap()` to seed the initial feature set.
-    /// @param bootstrapper Who can call `bootstrap()`.
-    constructor(address bootstrapper) {
-        // Temporarily create and register the bootstrap feature.
-        // It will deregister itself after `bootstrap()` has been called.
-        BootstrapFeature bootstrap = new BootstrapFeature(bootstrapper);
-        LibProxyStorage.getStorage().impls[bootstrap.bootstrap.selector] =
-            address(bootstrap);
-    }
+    constructor(address registryFeature, address ownableFeature) {
+        // Initialize RegistryFeature.
+        _extend(ISimpleFunctionRegistryFeature.registerMethods.selector, registryFeature);
+        _extend(ISimpleFunctionRegistryFeature.extend.selector, registryFeature);
+        _extend(ISimpleFunctionRegistryFeature.rollback.selector, registryFeature);
+        _extend(ISimpleFunctionRegistryFeature.getRollbackLength.selector, registryFeature);
+        _extend(ISimpleFunctionRegistryFeature.getRollbackEntryAtIndex.selector, registryFeature);
 
-    // solhint-disable state-visibility
+        // Initialize OwnableFeature.
+        _extend(IOwnableFeature.transferOwnership.selector, ownableFeature);
+        _extend(IOwnableFeature.owner.selector, ownableFeature);
+
+        // Transfer ownership to the real owner.
+        LibOwnableStorage.getStorage().owner = msg.sender;
+    }
 
     /// @dev Forwards calls to the appropriate implementation contract.
     fallback() external payable {
-        bytes memory b = msg.data;
-        bytes4 selector;
+        address impl = LibProxyStorage.getStorage().impls[msg.sig];
         assembly {
-            selector := mload(add(b, 32))
-            // Solidity does not require us to clean the trailing bytes.
-            // We do it anyway
-            selector := and(selector, 0xFFFFFFFF00000000000000000000000000000000000000000000000000000000)
-        }
+            if impl {
+                calldatacopy(0, 0, calldatasize())
+                if delegatecall(gas(), impl, 0, calldatasize(), 0, 0) {
+                // Success, copy the returned data and return.
+                    returndatacopy(0, 0, returndatasize())
+                    return(0, returndatasize())
+                }
 
-        address impl = LibProxyStorage.getStorage().impls[selector];
-        if (impl == address(0)) {
-            revert("METHOD_NOT_IMPLEMENTED");
+            // Failed, copy the returned data and revert.
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
         }
-
-        (bool success, bytes memory resultData) = impl.delegatecall(msg.data);
-        if (!success) {
-            _revertWithData(resultData);
-        }
-        _returnWithData(resultData);
+        revert("METHOD_NOT_IMPLEMENTED");
     }
 
     /// @dev Fallback for just receiving ether.
     receive() external payable {}
-
-    // solhint-enable state-visibility
 
     /// @dev Get the implementation contract of a registered function.
     /// @param selector The function selector.
@@ -78,15 +76,16 @@ contract ElementEx {
         return LibProxyStorage.getStorage().impls[selector];
     }
 
-    /// @dev Revert with arbitrary bytes.
-    /// @param data Revert data.
-    function _revertWithData(bytes memory data) private pure {
-        assembly { revert(add(data, 32), mload(data)) }
-    }
+    event ProxyFunctionUpdated(bytes4 indexed selector, address oldImpl, address newImpl);
 
-    /// @dev Return with arbitrary bytes.
-    /// @param data Return data.
-    function _returnWithData(bytes memory data) private pure {
-        assembly { return(add(data, 32), mload(data)) }
+    function _extend(bytes4 selector, address impl) private {
+        LibSimpleFunctionRegistryStorage.Storage storage stor = LibSimpleFunctionRegistryStorage.getStorage();
+        LibProxyStorage.Storage storage proxyStor = LibProxyStorage.getStorage();
+
+        address oldImpl = proxyStor.impls[selector];
+        address[] storage history = stor.implHistory[selector];
+        history.push(oldImpl);
+        proxyStor.impls[selector] = impl;
+        emit ProxyFunctionUpdated(selector, oldImpl, impl);
     }
 }

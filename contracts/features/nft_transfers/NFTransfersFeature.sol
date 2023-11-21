@@ -44,6 +44,8 @@ contract NFTransfersFeature is INFTransfersFeature {
                     if (item.itemType == ItemType.ERC721) {
                         require(item.amounts.length == 0, "require(item.amounts.length==0)");
                         address token = item.token;
+                        require(token.code.length != 0, "INVALID_ERC721_TOKEN");
+
                         uint256[] calldata ids = item.ids;
                         uint256 lengthIds = ids.length;
                         for (uint256 j = 0; j < lengthIds; ++j) {
@@ -56,6 +58,7 @@ contract NFTransfersFeature is INFTransfersFeature {
                             }
                         }
                     } else if (item.itemType == ItemType.ERC1155) {
+                        require(item.token.code.length != 0, "INVALID_ERC1155_TOKEN");
                         try IERC1155(item.token).safeBatchTransferFrom(msg.sender, to, item.ids, item.amounts, "") {
                             someSuccess = true;
                         } catch {
@@ -73,6 +76,8 @@ contract NFTransfersFeature is INFTransfersFeature {
                     if (item.itemType == ItemType.ERC721) {
                         require(item.amounts.length == 0, "require(item.amounts.length==0)");
                         address token = item.token;
+                        require(token.code.length != 0, "INVALID_ERC721_TOKEN");
+
                         uint256[] calldata ids = item.ids;
                         uint256 lengthIds = ids.length;
                         for (uint256 j = 0; j < lengthIds; ++j) {
@@ -85,6 +90,7 @@ contract NFTransfersFeature is INFTransfersFeature {
                             }
                         }
                     } else if (item.itemType == ItemType.ERC1155) {
+                        require(item.token.code.length != 0, "INVALID_ERC1155_TOKEN");
                         try IERC1155(item.token).safeBatchTransferFrom(msg.sender, to, item.ids, item.amounts, "") {
                             someSuccess = true;
                         } catch {
@@ -109,6 +115,8 @@ contract NFTransfersFeature is INFTransfersFeature {
             if (to.isContract()) {
                 for (uint256 i = 0; i < tokens.length; ++i) {
                     address token = tokens[i];
+                    require(token.code.length != 0, "INVALID_ERC721_TOKEN");
+
                     uint256[] calldata ids = tokenIds[i];
                     uint256 lengthIds = ids.length;
                     for (uint256 j = 0; j < lengthIds; ++j) {
@@ -124,6 +132,8 @@ contract NFTransfersFeature is INFTransfersFeature {
             } else {
                 for (uint256 i = 0; i < tokens.length; ++i) {
                     address token = tokens[i];
+                    require(token.code.length != 0, "INVALID_ERC721_TOKEN");
+
                     uint256[] calldata ids = tokenIds[i];
                     uint256 lengthIds = ids.length;
                     for (uint256 j = 0; j < lengthIds; ++j) {

@@ -25,55 +25,51 @@ import "../libs/LibNFTOrder.sol";
 import "../libs/LibStructure.sol";
 
 
-interface IERC1155OrdersEvent {
+interface IERC721OrdersEvent {
 
-    /// @dev Emitted whenever an `ERC1155SellOrder` is filled.
+    /// @dev Emitted whenever an `ERC721SellOrder` is filled.
+    /// @param orderHash The `ERC721SellOrder` hash.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
     /// @param erc20Token The address of the ERC20 token.
-    /// @param erc20FillAmount The amount of ERC20 token filled.
-    /// @param erc1155Token The address of the ERC1155 token.
-    /// @param erc1155TokenId The ID of the ERC1155 asset.
-    /// @param erc1155FillAmount The amount of ERC1155 asset filled.
-    /// @param orderHash The `ERC1155SellOrder` hash.
-    event ERC1155SellOrderFilled(
+    /// @param erc20TokenAmount The amount of ERC20 token to sell.
+    /// @param erc721Token The address of the ERC721 token.
+    /// @param erc721TokenId The ID of the ERC721 asset.
+    event ERC721SellOrderFilled(
         bytes32 orderHash,
         address maker,
         address taker,
         uint256 nonce,
         IERC20 erc20Token,
-        uint256 erc20FillAmount,
+        uint256 erc20TokenAmount,
         LibStructure.Fee[] fees,
-        address erc1155Token,
-        uint256 erc1155TokenId,
-        uint128 erc1155FillAmount
+        address erc721Token,
+        uint256 erc721TokenId
     );
 
-    /// @dev Emitted whenever an `ERC1155BuyOrder` is filled.
+    /// @dev Emitted whenever an `ERC721BuyOrder` is filled.
+    /// @param orderHash The `ERC721BuyOrder` hash.
     /// @param maker The maker of the order.
     /// @param taker The taker of the order.
     /// @param erc20Token The address of the ERC20 token.
-    /// @param erc20FillAmount The amount of ERC20 token filled.
-    /// @param erc1155Token The address of the ERC1155 token.
-    /// @param erc1155TokenId The ID of the ERC1155 asset.
-    /// @param erc1155FillAmount The amount of ERC1155 asset filled.
-    /// @param orderHash The `ERC1155BuyOrder` hash.
-    event ERC1155BuyOrderFilled(
+    /// @param erc20TokenAmount The amount of ERC20 token to buy.
+    /// @param erc721Token The address of the ERC721 token.
+    /// @param erc721TokenId The ID of the ERC721 asset.
+    event ERC721BuyOrderFilled(
         bytes32 orderHash,
         address maker,
         address taker,
         uint256 nonce,
         IERC20 erc20Token,
-        uint256 erc20FillAmount,
+        uint256 erc20TokenAmount,
         LibStructure.Fee[] fees,
-        address erc1155Token,
-        uint256 erc1155TokenId,
-        uint128 erc1155FillAmount
+        address erc721Token,
+        uint256 erc721TokenId
     );
 
-    /// @dev Emitted when an `ERC1155SellOrder` is pre-signed.
+    /// @dev Emitted when an `ERC721SellOrder` is pre-signed.
     ///      Contains all the fields of the order.
-    event ERC1155SellOrderPreSigned(
+    event ERC721SellOrderPreSigned(
         address maker,
         address taker,
         uint256 expiry,
@@ -81,14 +77,13 @@ interface IERC1155OrdersEvent {
         IERC20 erc20Token,
         uint256 erc20TokenAmount,
         LibNFTOrder.Fee[] fees,
-        address erc1155Token,
-        uint256 erc1155TokenId,
-        uint128 erc1155TokenAmount
+        address erc721Token,
+        uint256 erc721TokenId
     );
 
-    /// @dev Emitted when an `ERC1155BuyOrder` is pre-signed.
+    /// @dev Emitted when an `ERC721BuyOrder` is pre-signed.
     ///      Contains all the fields of the order.
-    event ERC1155BuyOrderPreSigned(
+    event ERC721BuyOrderPreSigned(
         address maker,
         address taker,
         uint256 expiry,
@@ -96,14 +91,16 @@ interface IERC1155OrdersEvent {
         IERC20 erc20Token,
         uint256 erc20TokenAmount,
         LibNFTOrder.Fee[] fees,
-        address erc1155Token,
-        uint256 erc1155TokenId,
-        LibNFTOrder.Property[] erc1155TokenProperties,
-        uint128 erc1155TokenAmount
+        address erc721Token,
+        uint256 erc721TokenId,
+        LibNFTOrder.Property[] nftProperties
     );
 
-    /// @dev Emitted whenever an `ERC1155Order` is cancelled.
+    /// @dev Emitted whenever an `ERC721Order` is cancelled.
     /// @param maker The maker of the order.
     /// @param nonce The nonce of the order that was cancelled.
-    event ERC1155OrderCancelled(address maker, uint256 nonce);
+    event ERC721OrderCancelled(address maker, uint256 nonce);
+
+    /// @dev Emitted HashNonceIncremented.
+    event HashNonceIncremented(address maker, uint256 newHashNonce);
 }

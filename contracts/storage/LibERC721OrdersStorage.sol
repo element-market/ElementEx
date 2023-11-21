@@ -18,7 +18,7 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 import "./LibStorage.sol";
 
@@ -30,8 +30,10 @@ library LibERC721OrdersStorage {
     struct Storage {
         // maker => nonce range => order status bit vector
         mapping(address => mapping(uint248 => uint256)) orderStatusByMaker;
-        // order hash => hashNonce
+        // order hash => preSigned
         mapping(bytes32 => uint256) preSigned;
+        // order hash => filledAmount
+        mapping(bytes32 => uint128) filledAmount;
     }
 
     /// @dev Get the storage bucket for this contract.

@@ -17,7 +17,7 @@
 
 */
 
-pragma solidity ^0.8.15;
+pragma solidity ^0.8.17;
 
 import "../../storage/LibCommonNftOrdersStorage.sol";
 import "../../storage/LibERC721OrdersStorage.sol";
@@ -62,12 +62,10 @@ contract BasicERC721OrdersFeature is IBasicERC721OrdersFeature {
     }
 
     function fillBasicERC721Order(BasicOrderParameter calldata parameter) external override payable {
-        uint256 ethBalanceBefore;
+        uint256 ethBalanceBefore = address(this).balance - msg.value;
         address maker;
         address taker;
         assembly {
-            ethBalanceBefore := sub(selfbalance(), callvalue())
-
             // data1 [96 bits(ethAmount) + 160 bits(maker)]
             // maker = data1 & MASK_160
             maker := and(calldataload(0x4), MASK_160)
@@ -132,10 +130,9 @@ contract BasicERC721OrdersFeature is IBasicERC721OrdersFeature {
     /// parameter2 [80 bits(taker part1) + 16 bits(feePercentage1) + 160 bits(feeRecipient1)]
     /// parameter3 [80 bits(taker part2) + 16 bits(feePercentage2) + 160 bits(feeRecipient2)]
     function fillBasicERC721Orders(BasicOrderParameters calldata /* parameters */, BasicOrderItem[] calldata orders) external override payable {
+        uint256 ethBalanceBefore = address(this).balance - msg.value;
         address _impl = _IMPL;
         assembly {
-            let ethBalanceBefore := sub(selfbalance(), callvalue())
-
             // taker = ((parameter2 >> 176) << 80) | (parameter3 >> 176)
             let taker := or(shl(80, shr(176, calldataload(0x24))), shr(176, calldataload(0x44)))
 
@@ -156,7 +153,12 @@ contract BasicERC721OrdersFeature is IBasicERC721OrdersFeature {
             // selector for delegateCallFillBasicERC721Order(BasicOrderParameter)
             mstore(0, 0xcb750fd800000000000000000000000000000000000000000000000000000000)
 
-            for { let offset := orders.offset } lt(offset, calldatasize()) { offset := add(offset, 0xa0 /* 5 * 32 */) } {
+            for {
+                let offset := orders.offset
+                let ptrEnd := add(offset, mul(orders.length, 0xa0))
+            } lt(offset, ptrEnd) {
+                offset := add(offset, 0xa0 /* 5 * 32 */)
+            } {
                 // BasicOrderItem {
                 //    0x0 address maker;
                 //    0x20 uint256 extra;
@@ -693,12 +695,22 @@ contract BasicERC721OrdersFeature is IBasicERC721OrdersFeature {
 
     function _transferERC721AssetFrom(uint256 nftAddress, address from, address to, uint256 nftId) internal {
         assembly {
+            let token := and(nftAddress, MASK_160)
+            if iszero(extcodesize(token)) {
+                // revert("invalid erc721 address")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x00000016696e76616c6964206572633732312061646472657373000000000000)
+                mstore(0x60, 0)
+                revert(0, 0x64)
+            }
+
             // selector for transferFrom(address,address,uint256)
             mstore(0, 0x23b872dd00000000000000000000000000000000000000000000000000000000)
             mstore(0x04, from)
             mstore(0x24, to)
             mstore(0x44, nftId)
-            if iszero(call(gas(), and(nftAddress, MASK_160), 0, 0, 0x64, 0, 0)) {
+            if iszero(call(gas(), token, 0, 0, 0x64, 0, 0)) {
                 // revert("Failed to transfer ERC721.")
                 mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
                 mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)

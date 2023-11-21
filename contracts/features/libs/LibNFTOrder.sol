@@ -18,7 +18,7 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../../vendor/IPropertyValidator.sol";
@@ -113,6 +113,14 @@ library LibNFTOrder {
         uint128 orderAmount;
         // The remaining amount of the ERC721/ERC1155 asset
         // that can be filled for the order.
+        uint128 remainingAmount;
+    }
+
+    struct OrderInfoV2 {
+        bytes32 structHash;
+        bytes32 orderHash;
+        OrderStatus status;
+        uint128 orderAmount;
         uint128 remainingAmount;
     }
 
@@ -251,6 +259,10 @@ library LibNFTOrder {
 
     function asNFTSellOrder(ERC1155SellOrder memory erc1155SellOrder) internal pure returns (NFTSellOrder memory order) {
         assembly { order := erc1155SellOrder }
+    }
+
+    function asNFTSellOrder(ERC1155BuyOrder memory erc1155BuyOrder) internal pure returns (NFTSellOrder memory order) {
+        assembly { order := erc1155BuyOrder }
     }
 
     function asNFTBuyOrder(ERC1155BuyOrder memory erc1155BuyOrder) internal pure returns (NFTBuyOrder memory order) {

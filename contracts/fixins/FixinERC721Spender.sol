@@ -18,14 +18,14 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 
 /// @dev Helpers for moving ERC721 assets around.
 abstract contract FixinERC721Spender {
 
     // Mask of the lower 20 bytes of a bytes32.
-    uint256 constant private ADDRESS_MASK = 0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff;
+    uint256 constant private ADDRESS_MASK = (1 << 160) - 1;
 
     /// @dev Transfer an ERC721 asset from `owner` to `to`.
     /// @param token The address of the ERC721 token contract.
@@ -33,6 +33,7 @@ abstract contract FixinERC721Spender {
     /// @param to The recipient of the asset.
     /// @param tokenId The token ID of the asset to transfer.
     function _transferERC721AssetFrom(address token, address owner, address to, uint256 tokenId) internal {
+        require(token.code.length != 0, "_transferERC721/INVALID_TOKEN");
         uint256 success;
         assembly {
             let ptr := mload(0x40) // free memory pointer
@@ -43,7 +44,7 @@ abstract contract FixinERC721Spender {
             mstore(add(ptr, 0x24), and(to, ADDRESS_MASK))
             mstore(add(ptr, 0x44), tokenId)
 
-            success := call(gas(), and(token, ADDRESS_MASK), 0, ptr, 0x64, 0, 0)
+            success := call(gas(), token, 0, ptr, 0x64, 0, 0)
         }
         require(success != 0, "_transferERC721/TRANSFER_FAILED");
     }
@@ -54,6 +55,7 @@ abstract contract FixinERC721Spender {
     /// @param to The recipient of the asset.
     /// @param tokenId The token ID of the asset to transfer.
     function _safeTransferERC721AssetFrom(address token, address owner, address to, uint256 tokenId) internal {
+        require(token.code.length != 0, "_safeTransferERC721AssetFrom/INVALID_TOKEN");
         uint256 success;
         assembly {
             let ptr := mload(0x40) // free memory pointer

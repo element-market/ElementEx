@@ -18,7 +18,7 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 /// @dev A library for validating signatures.
 library LibSignature {
@@ -26,7 +26,10 @@ library LibSignature {
     /// @dev Allowed signature types.
     enum SignatureType {
         EIP712,
-        PRESIGNED
+        PRESIGNED,
+        EIP712_BULK,
+        EIP712_1271,
+        EIP712_BULK_1271
     }
 
     /// @dev Encoded EC signature.

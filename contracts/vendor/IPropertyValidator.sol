@@ -18,7 +18,7 @@
 
 */
 
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.17;
 
 
 interface IPropertyValidator {
@@ -27,6 +27,13 @@ interface IPropertyValidator {
     ///      Should revert if the asset does not satisfy the specified properties.
     /// @param tokenAddress The ERC721/ERC1155 token contract address.
     /// @param tokenId The ERC721/ERC1155 tokenId of the asset to check.
+    /// @param orderHash The order hash.
     /// @param propertyData Encoded properties or auxiliary data needed to perform the check.
-    function validateProperty(address tokenAddress, uint256 tokenId, bytes calldata propertyData, bytes calldata takerData) external view;
+    function validateProperty(
+        address tokenAddress,
+        uint256 tokenId,
+        bytes32 orderHash,
+        bytes calldata propertyData,
+        bytes calldata takerData
+    ) external view returns(bytes4);
 }

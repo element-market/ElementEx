@@ -17,7 +17,7 @@
 
 */
 
-pragma solidity ^0.8.15;
+pragma solidity ^0.8.17;
 
 import "../../storage/LibCommonNftOrdersStorage.sol";
 import "../../storage/LibERC721OrdersStorage.sol";
@@ -29,6 +29,7 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
     uint256 internal constant MASK_192 = (1 << 192) - 1;
     uint256 internal constant MASK_160 = (1 << 160) - 1;
     uint256 internal constant MASK_64 = (1 << 64) - 1;
+    uint256 internal constant MASK_40 = (1 << 40) - 1;
     uint256 internal constant MASK_32 = (1 << 32) - 1;
     uint256 internal constant MASK_16 = (1 << 16) - 1;
 
@@ -84,10 +85,9 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
     }
 
     function fillBatchSignedERC721Order(BatchSignedERC721OrderParameter calldata /* parameter */, bytes calldata collections) external override payable {
-        uint256 ethBalanceBefore;
+        uint256 ethBalanceBefore = address(this).balance - msg.value;
         uint256 offsetCollectionsBytes;
         assembly {
-            ethBalanceBefore := sub(selfbalance(), callvalue())
             offsetCollectionsBytes := collections.offset
         }
 
@@ -144,12 +144,12 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
     ) external override payable {
         require(parameters.length > 0, "fillBatchSignedERC721Orders: invalid parameters.");
 
+        uint256 ethBalanceBefore = address(this).balance - msg.value;
         uint256 platformFeeRecipient = parameters[0].data3 & MASK_160;
         address impl = _IMPL;
         address weth = _WETH;
-        assembly {
-            let ethBalanceBefore := sub(selfbalance(), callvalue())
 
+        assembly {
             let withdrawETHAmount := shr(160, additional1)
             let erc20Token := and(additional1, MASK_160)
             let royaltyFeeRecipient := and(additional2, MASK_160)
@@ -190,8 +190,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
             // memory[0x180 - 0x1a0] collections.length
             // memory[0x1a0 - ] collections.data
 
-            let endPtr := add(parameters.offset, mul(parameters.length, 0x20))
-            for { let ptr := parameters.offset } lt(ptr, endPtr) { ptr := add(ptr, 0x20) } {
+            let ptrEnd := add(parameters.offset, mul(parameters.length, 0x20))
+            for { let ptr := parameters.offset } lt(ptr, ptrEnd) { ptr := add(ptr, 0x20) } {
                 let ptrData := add(parameters.offset, calldataload(ptr))
 
                 // memory[0x40 - 0x60] selector for `delegateCallFillBatchSignedERC721Order`
@@ -265,6 +265,10 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                 }
 
                 default {
+                    if iszero(extcodesize(_erc20Token)) {
+                        _revertInvalidERC20Token()
+                    }
+
                     // selector for `transferFrom(address,address,uint256)`
                     mstore(0, 0x23b872dd)
                     mstore(0x20, caller())
@@ -348,6 +352,15 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                 mstore(0x80, 0)
                 revert(0, 0x84)
             }
+
+            function _revertInvalidERC20Token() {
+                // revert("invalid erc20 token")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x00000013696e76616c696420657263323020746f6b656e000000000000000000)
+                mstore(0x60, 0)
+                revert(0, 0x64)
+            }
         }
     }
 
@@ -404,7 +417,7 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
         }
     }
 
-    /// data1 [56 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
+    /// data1 [[8 bits(signatureType) + 8 bits(reserved) + 40 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
     /// data2 [64 bits(taker part1) + 32 bits(expiryTime) + 160 bits(erc20Token)]
     /// data3 [96 bits(taker part2) + 160 bits(platformFeeRecipient)]
     function _fillBatchSignedERC721Order(uint256 offsetCollectionsBytes) internal {
@@ -483,8 +496,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
             /////////////////////////// global variables /////////////////////////////////
             let nonceVectorForCheckingNonReentrant
 
-            // collectionStartNonce = data1 >> 200
-            let collectionStartNonce := shr(200, calldataload(0x4))
+            // collectionStartNonce = (data1 >> 200) & MASK_40
+            let collectionStartNonce := and(shr(200, calldataload(0x4)), MASK_40)
 
             // platformFeeRecipient = data3 & MASK_160
             let platformFeeRecipient := and(calldataload(0x44), MASK_160)
@@ -493,7 +506,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
             let totalERC20AmountToPlatform
             let totalERC20AmountToMaker
 
-            for { let offsetCollection := offsetCollectionsBytes } lt(offsetCollection, calldatasize()) {} {
+            let ptrEnd := add(offsetCollectionsBytes, calldataload(sub(offsetCollectionsBytes, 0x20)))
+            for { let offsetCollection := offsetCollectionsBytes } lt(offsetCollection, ptrEnd) {} {
                 // memory[0xe0 - 0x100] nftAddress
                 // head1 [96 bits(filledIndexList part1) + 160 bits(nftAddress)]
                 mstore(0xe0, and(calldataload(offsetCollection), MASK_160)) // nftAddress = head1 & MASK_160
@@ -509,6 +523,17 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                 let filledIndexList := or(and(calldataload(offsetCollection), MASK_INDEX_LIST_PART1), and(shr(64, mload(0x300)), MASK_INDEX_LIST_PART2))
                 let filledCount := byte(2, mload(0x300))
                 let itemsCount := byte(1, mload(0x300))
+                if filledCount {
+                    if gt(filledCount, itemsCount) {
+                        _revertInvalidFilledIndex()
+                    }
+                    if gt(filledCount, 128) {
+                        _revertInvalidFilledIndex()
+                    }
+                    if iszero(extcodesize(mload(0xe0))) {
+                        _revertInvalidERC721Token()
+                    }
+                }
 
                 // memory[0x140 - 0x160] platformFeeRecipient
                 mstore(0x140, platformFeeRecipient)
@@ -934,6 +959,10 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                     }
                 }
                 default {
+                    if iszero(extcodesize(mload(0x80))) {
+                        _revertInvalidERC20Token()
+                    }
+
                     // memory[0x420 - 0x440] selector for `transferFrom(address,address,uint256)`
                     // memory[0x440 - 0x460] msg.sender
                     // memory[0x460 - 0x480] to
@@ -1031,17 +1060,38 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                 mstore(0x80, 0)
                 revert(0, 0x84)
             }
+
+            function _revertInvalidERC20Token() {
+                // revert("invalid erc20 token")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x00000013696e76616c696420657263323020746f6b656e000000000000000000)
+                mstore(0x60, 0)
+                revert(0, 0x64)
+            }
+
+            function _revertInvalidERC721Token() {
+                // revert("invalid erc271 token")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x00000014696e76616c69642065726337323120746f6b656e0000000000000000)
+                mstore(0x60, 0)
+                revert(0, 0x64)
+            }
         }
     }
 
-    /// data1 [56 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
+    /// data1 [8 bits(signatureType) + 8 bits(reserved) + 40 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
     /// data2 [64 bits(taker part1) + 32 bits(expiryTime) + 160 bits(erc20Token)]
     function _validateOrder(uint256 offsetCollectionsBytes) internal view returns (bytes32 orderHash) {
         address maker;
+        uint8 signatureType;
         uint8 v;
+
         assembly {
             let data1 := calldataload(0x4)
             let data2 := calldataload(0x24)
+            signatureType := byte(0, data1)
             v := byte(7, data1)
 
             // Check for listingTime.
@@ -1095,18 +1145,74 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
         // Get order hash.
         orderHash = _getEIP712Hash(_getStructHash(offsetCollectionsBytes));
 
-        bytes32 r;
-        bytes32 s;
-        assembly {
-            // Must reset memory status before the `require` sentence.
-            mstore(0x40, 0x80)
-            mstore(0x60, 0)
+        if (signatureType == 0) {
+            bytes32 r;
+            bytes32 s;
+            assembly {
+                // Must reset memory status before the `require` sentence.
+                mstore(0x40, 0x80)
+                mstore(0x60, 0)
 
-            // Get r and v.
-            r := calldataload(0x64)
-            s := calldataload(0x84)
+                // Get r and v.
+                r := calldataload(0x64)
+                s := calldataload(0x84)
+            }
+            require(maker == ecrecover(orderHash, v, r, s), "fillBatchSignedERC721Order: failed to validate signature.");
+        } else if (signatureType == 3) {
+            assembly {
+                // selector for `isValidSignature(bytes32,bytes)`
+                mstore(0, 0x1626ba7e)
+                mstore(0x20, orderHash)
+                mstore(0x40, 0x40)
+                mstore(0x60, 0x41)
+                calldatacopy(0x80, 0x64, 64)
+                mstore(0xc0, shl(248, v))
+
+                if iszero(extcodesize(maker)) {
+                    _revertInvalidMaker()
+                }
+
+                // Call signer with `isValidSignature` to validate signature.
+                if iszero(staticcall(gas(), maker, 0x1c, 0xa5, 0, 0x20)) {
+                    _revertInvalidSignature()
+                }
+
+                // Check for returnData.
+                if iszero(eq(mload(0), 0x1626ba7e00000000000000000000000000000000000000000000000000000000)) {
+                    _revertInvalidSignature()
+                }
+
+                function _revertInvalidMaker() {
+                    // revert("fillBatchSignedERC721Order: invalid maker.")
+                    mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x40, 0x0000002a66696c6c42617463685369676e65644552433732314f726465723a20)
+                    mstore(0x60, 0x696e76616c6964206d616b65722e000000000000000000000000000000000000)
+                    mstore(0x80, 0)
+                    revert(0, 0x84)
+                }
+
+                function _revertInvalidSignature() {
+                    // revert("fillBatchSignedERC721Order: invalid signature.")
+                    mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                    mstore(0x40, 0x0000003266696c6c42617463685369676e65644552433732314f726465723a20)
+                    mstore(0x60, 0x696e76616c6964207369676e61747572652e0000000000000000000000000000)
+                    mstore(0x80, 0)
+                    revert(0, 0x84)
+                }
+            }
+        } else {
+            assembly {
+                // revert("fillBatchSignedERC721Order: invalid signatureType.")
+                mstore(0, 0x08c379a000000000000000000000000000000000000000000000000000000000)
+                mstore(0x20, 0x0000002000000000000000000000000000000000000000000000000000000000)
+                mstore(0x40, 0x0000003266696c6c42617463685369676e65644552433732314f726465723a20)
+                mstore(0x60, 0x696e76616c6964207369676e6174757265547970652e00000000000000000000)
+                mstore(0x80, 0)
+                revert(0, 0x84)
+            }
         }
-        require(maker == ecrecover(orderHash, v, r, s), "fillBatchSignedERC721Order: failed to validate signature.");
     }
 
     function _getEIP712Hash(bytes32 structHash) internal view returns (bytes32 eip712Hash) {
@@ -1136,7 +1242,7 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
         }
     }
 
-    /// data1 [56 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
+    /// data1 [[8 bits(signatureType) + 8 bits(reserved) + 40 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
     /// data2 [64 bits(taker part1) + 32 bits(expiryTime) + 160 bits(erc20Token)]
     /// data3 [96 bits(taker part2) + 160 bits(platformFeeRecipient)]
     function _getStructHash(uint256 offsetCollectionsBytes) internal view returns (bytes32 structHash) {
@@ -1174,8 +1280,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
             // expiryTime = (data2 >> 160) & MASK_32
             mstore(0x60, and(shr(160, data2), MASK_32))
 
-            // startNonce = data1 >> 200
-            mstore(0x80, shr(200, data1))
+            // startNonce = (data1 >> 200) & MASK_40
+            mstore(0x80, and(shr(200, data1), MASK_40))
 
             // erc20Token = data2 & MASK_160
             mstore(0xa0, and(data2, MASK_160))
@@ -1204,7 +1310,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
             let ptrCollectionHash
 
             let offsetCollection := offsetCollectionsBytes
-            for {} lt(offsetCollection, calldatasize()) {} {
+            let ptrEnd := add(offsetCollectionsBytes, calldataload(sub(offsetCollectionsBytes, 0x20)))
+            for {} lt(offsetCollection, ptrEnd) {} {
                 // head1 [96 bits(filledIndexList part1) + 160 bits(nftAddress)]
                 // nftAddress = head1 & MASK_160
                 let nftAddress := and(calldataload(offsetCollection), MASK_160)
@@ -1325,8 +1432,8 @@ contract BatchSignedERC721OrdersFeature is IBatchSignedERC721OrdersFeature {
                 offsetCollection := add(offsetItems, itemsBytesLength)
             }
 
-            // if (offsetCollection != calldatasize()) revert()
-            if iszero(eq(offsetCollection, calldatasize())) {
+            // if (offsetCollection != ptrEnd) revert()
+            if iszero(eq(offsetCollection, ptrEnd)) {
                 _revertInvalidCollectionsBytes()
             }
 

@@ -18,44 +18,44 @@
 */
 
 
-pragma solidity ^0.8.15;
+pragma solidity ^0.8.17;
 
 
 interface IBatchSignedERC721OrdersFeature {
 
     /// @param fee [16 bits(platformFeePercentage) + 16 bits(royaltyFeePercentage) + 160 bits(royaltyFeeRecipient)].
     /// @param items [96 bits(erc20TokenAmount) + 160 bits(nftId)].
-    struct BasicCollection {
-        address nftAddress;
-        bytes32 fee;
-        bytes32[] items;
-    }
-
-    struct OrderItem {
-        uint256 erc20TokenAmount;
-        uint256 nftId;
-    }
-
+    /// struct BasicCollection {
+    ///     address nftAddress;
+    ///     bytes32 fee;
+    ///     bytes32[] items;
+    /// }
+    ///
+    /// struct OrderItem {
+    ///     uint256 erc20TokenAmount;
+    ///     uint256 nftId;
+    /// }
+    ///
     /// @param fee [16 bits(platformFeePercentage) + 16 bits(royaltyFeePercentage) + 160 bits(royaltyFeeRecipient)].
-    struct Collection {
-        address nftAddress;
-        bytes32 fee;
-        OrderItem[] items;
-    }
+    /// struct Collection {
+    ///     address nftAddress;
+    ///     bytes32 fee;
+    ///     OrderItem[] items;
+    /// }
+    ///
+    /// struct BatchSignedERC721Orders {
+    ///     address maker;
+    ///     uint256 listingTime;
+    ///     uint256 expiryTime;
+    ///     uint256 startNonce;
+    ///     address erc20Token;
+    ///     address platformFeeRecipient;
+    ///     BasicCollection[] basicCollections;
+    ///     Collection[] collections;
+    ///     uint256 hashNonce;
+    /// }
 
-    struct BatchSignedERC721Orders {
-        address maker;
-        uint256 listingTime;
-        uint256 expiryTime;
-        uint256 startNonce;
-        address erc20Token;
-        address platformFeeRecipient;
-        BasicCollection[] basicCollections;
-        Collection[] collections;
-        uint256 hashNonce;
-    }
-
-    /// @param data1 [56 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
+    /// @param data1 [8 bits(signatureType) + 8 bits(reserved) + 40 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
     /// @param data2 [64 bits(taker part1) + 32 bits(expiryTime) + 160 bits(erc20Token)]
     /// @param data3 [96 bits(taker part2) + 160 bits(platformFeeRecipient)]
     struct BatchSignedERC721OrderParameter {
@@ -68,7 +68,7 @@ interface IBatchSignedERC721OrdersFeature {
 
     function fillBatchSignedERC721Order(BatchSignedERC721OrderParameter calldata parameter, bytes calldata collections) external payable;
 
-    /// @param data1 [56 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
+    /// @param data1 [8 bits(signatureType) + 8 bits(reserved) + 40 bits(startNonce) + 8 bits(v) + 32 bits(listingTime) + 160 bits(maker)]
     /// @param data2 [64 bits(taker part1) + 32 bits(expiryTime) + 160 bits(erc20Token)]
     /// @param data3 [96 bits(taker part2) + 160 bits(platformFeeRecipient)]
     struct BatchSignedERC721OrderParameters {
