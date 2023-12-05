@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://www.element.market/build/logo-header-268a92cd.svg" height="60"/>
-</p>
-
 
 - Ethereum Mainnet
   <table>
