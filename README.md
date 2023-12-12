@@ -494,6 +494,51 @@
 
   </table>
 
+- Mantle
+  <table>
+  <tr>
+  <th>Contract Name</th>
+  <th>Contract Address</th>
+  </tr>
+
+  <tr><td>ElementEx</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x2fa13cf695EC51Ded5B8E45Ad0BEf838aB17E2aF/contracts#address-tabs">0x2fa13cf695EC51Ded5B8E45Ad0BEf838aB17E2aF</a>
+  </td></tr>
+
+  <tr><td>BatchSignedERC721OrdersFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0xF52C51ab9E773E9e162b962D0D0ee6F552601d2A/contracts#address-tabs">0xF52C51ab9E773E9e162b962D0D0ee6F552601d2A</a>
+  </td></tr>
+
+  <tr><td>ERC721OrdersFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x1Cba90c125341d8b3Cf15395b812dc680AF70962/contracts#address-tabs">0x1Cba90c125341d8b3Cf15395b812dc680AF70962</a>
+  </td></tr>
+
+  <tr><td>ERC1155OrdersFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x1e0E556b7f310c320bA22b5dEC0A0755C1c9854b/contracts#address-tabs">0x1e0E556b7f310c320bA22b5dEC0A0755C1c9854b</a>
+  </td></tr>
+
+  <tr><td>MatchOrderFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x98bA216DD28129b268Ac41B525E64925254a9647/contracts#address-tabs">0x98bA216DD28129b268Ac41B525E64925254a9647</a>
+  </td></tr>
+
+  <tr><td>BasicERC721OrdersFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x899E42ce797527B5A2aA89176dA59e555eD6D1Cb/contracts#address-tabs">0x899E42ce797527B5A2aA89176dA59e555eD6D1Cb</a>
+  </td></tr>
+
+  <tr><td>NFTransfersFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x90259D1416E5AeA964eAC2441aA20e9Fb2D99262/contracts#address-tabs">0x90259D1416E5AeA964eAC2441aA20e9Fb2D99262</a>
+  </td></tr>
+
+  <tr><td>SimpleFunctionRegistryFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x2317D8B224328644759319DFFA2A5da77C72e0e9/contracts#address-tabs">0x2317D8B224328644759319DFFA2A5da77C72e0e9</a>
+  </td></tr>
+
+  <tr><td>OwnableFeature</td><td>
+  <a href="https://explorer.mantle.xyz/address/0x4196b39157659BF0De9ebF6E505648B7889a39cE/contracts#address-tabs">0x4196b39157659BF0De9ebF6E505648B7889a39cE</a>
+  </td></tr>
+
+  </table>
+
 - Avalanche Mainnet
   <table>
   <tr>
